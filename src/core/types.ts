@@ -76,6 +76,44 @@ export interface Waiver {
   approver?: string;
 }
 
+export interface DependencyComponent {
+  ecosystem: 'npm' | 'pypi';
+  name: string;
+  version: string;
+  direct: boolean;
+  dev: boolean;
+  source: string;
+  license?: string;
+  purl: string;
+  packagePath?: string;
+}
+
+export interface DependencySnapshot {
+  generatedAt: string;
+  components: DependencyComponent[];
+}
+
+export interface DependencyChange {
+  kind: 'added' | 'removed' | 'upgraded' | 'downgraded' | 'changed';
+  ecosystem: DependencyComponent['ecosystem'];
+  name: string;
+  before?: DependencyComponent;
+  after?: DependencyComponent;
+}
+
+export interface VulnerabilityAdvisory {
+  id: string;
+  ecosystem: DependencyComponent['ecosystem'];
+  package: string;
+  affected: string;
+  severity: Severity;
+  title?: string;
+  fixedVersion?: string;
+  source?: string;
+  url?: string;
+  knownExploited?: boolean;
+}
+
 export interface SentryCodeConfig {
   schemaVersion: 1;
   scan: {
@@ -93,6 +131,30 @@ export interface SentryCodeConfig {
       severity: Severity;
       description?: string;
     }>;
+  };
+  dependencies: {
+    enabled: boolean;
+    includeDev: boolean;
+    allowedRegistries: string[];
+    deniedPackages: string[];
+    allowedPackages: string[];
+    versionRestrictions: Record<string, string>;
+  };
+  licenses: {
+    enabled: boolean;
+    allowed: string[];
+    denied: string[];
+    reviewRequired: string[];
+    unknown: 'allow' | 'warn' | 'fail';
+    overrides: Record<string, string>;
+  };
+  vulnerabilities: {
+    enabled: boolean;
+    databaseFile: string;
+    failOnKnownExploited: boolean;
+  };
+  sbom: {
+    defaultFormat: 'cyclonedx' | 'spdx';
   };
   policy: {
     failOn: Severity[];

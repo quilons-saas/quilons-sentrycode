@@ -59,3 +59,29 @@ CLI
 ```
 
 Secrets are redacted in output. The scanner never intentionally prints full matched secret values.
+
+## Slice 2 dependency assurance
+
+SentryCode now includes dependency, SBOM, license, and offline vulnerability assurance for Node/npm and pinned Python dependencies.
+
+```bash
+# Full policy scan (secrets + dependencies/licenses/vulnerabilities)
+sentrycode scan .
+
+# Generate standards-based SBOM artifacts
+sentrycode sbom . --format cyclonedx --output artifacts/sbom.cdx.json
+sentrycode sbom . --format spdx --output artifacts/sbom.spdx.json
+
+# PR/release dependency change analysis between Git refs
+sentrycode dependencies diff . --base origin/main --head HEAD
+```
+
+Dependency policy is configured under `dependencies`, `licenses`, and `vulnerabilities` in `.sentrycode/config.json`. Vulnerability matching uses a local versioned JSON advisory database (`.sentrycode/vulnerability-db.json` by default), so mandatory scanning does not require a paid service or network connection.
+
+Supported discovery in this slice:
+
+- npm `package-lock.json` (lockfile v2/v3 `packages` plus legacy fallback)
+- pinned Python `requirements.txt` entries (`name==version`)
+- pinned PEP 621 `pyproject.toml` dependency entries (`name==version`)
+
+Unpinned Python constraints are intentionally not converted into invented installed versions; they are omitted from the component snapshot until a resolved lock/environment source is available.

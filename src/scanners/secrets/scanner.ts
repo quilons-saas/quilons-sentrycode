@@ -12,6 +12,13 @@ function lineAndColumn(content: string, index: number): { line: number; column: 
   return { line: parts.length, column: (parts.at(-1)?.length ?? 0) + 1 };
 }
 
+function isLikelyNonSecretToken(value: string): boolean {
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) return true;
+  if (value.includes('/') && value.includes('.')) return true;
+  if (/^(?:registry\.|www\.)/i.test(value)) return true;
+  return false;
+}
+
 function redact(value: string): string {
   if (value.length <= 8) return '[REDACTED]';
   return `${value.slice(0, 3)}…${value.slice(-3)}`;
@@ -104,6 +111,7 @@ export class SecretsScanner implements ScannerPlugin {
         const tokenRegex = /\b[A-Za-z0-9+/=_\-.]{24,128}\b/g;
         for (const match of content.matchAll(tokenRegex)) {
           const value = match[0];
+          if (isLikelyNonSecretToken(value)) continue;
           if (!looksLikeHighEntropySecret(value, context.config.secrets.minEntropyLength)) continue;
           const pos = lineAndColumn(content, match.index ?? 0);
           findings.push(buildFinding({
