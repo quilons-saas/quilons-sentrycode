@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "repository-policy",
+  "version": "1.0.0",
+  "level": "repository",
+  "scope": {
+    "repository": "quilons-sentrycode"
+  },
+  "enforcement": {
+    "warnOn": ["low", "medium"]
+  }
+}

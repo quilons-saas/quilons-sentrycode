@@ -1,0 +1,34 @@
+{
+  "name": "@quilons/sentrycode",
+  "version": "0.1.0",
+  "private": false,
+  "description": "QUILONS SentryCode - continuous software engineering compliance and evidence",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "sentrycode": "dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "compliance",
+    "integrations",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/test/*.test.js",
+    "start": "npm run build && node dist/cli/main.js",
+    "prepack": "npm run check && npm run test && npm run build",
+    "package:smoke": "npm run check && npm test && npm run build && node scripts/package-smoke.mjs",
+    "release:verify": "npm run package:smoke"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  }
+}

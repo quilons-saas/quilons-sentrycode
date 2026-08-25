@@ -1,0 +1,6 @@
+export const EXIT_CODES = {
+  PASS: 0,
+  POLICY_FAILURE: 1,
+  RUNTIME_FAILURE: 2,
+  CONFIGURATION_FAILURE: 3
+} as const;

@@ -1,0 +1,16 @@
+pipeline {
+  agent any
+  stages {
+    stage('SentryCode') {
+      steps {
+        sh 'npm install --no-save @quilons/sentrycode@0.1.0'
+        sh 'npx --no-install sentrycode check . --ci --format json --output .sentrycode/out/sentrycode.json'
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: '.sentrycode/out/**', allowEmptyArchive: true
+    }
+  }
+}

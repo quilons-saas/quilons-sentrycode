@@ -1,0 +1,12 @@
+[
+  {
+    "id": "DEV-001",
+    "standard": "misra-c",
+    "ruleId": "RULE-ID-FROM-LICENSED-RULESET",
+    "reason": "Example engineering deviation; replace with project-approved rationale.",
+    "approver": "engineering-authority",
+    "approvedAt": "2026-08-25T00:00:00.000Z",
+    "ticket": "ENG-001",
+    "expiresAt": "2027-08-25T00:00:00.000Z"
+  }
+]

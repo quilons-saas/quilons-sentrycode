@@ -1,1 +1,13 @@
-﻿node_modules/
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+.sentrycode/out/
+
+.tmp-test/
+.sentrycode/cache/
+.sentrycode/compliance/
+*.sentrycode-publication.json
+.sentrycode/backups/
+.sentrycode/audit/

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "quilons-secure-default",
+  "version": "1.0.0",
+  "level": "organization",
+  "description": "Example organization baseline.",
+  "enforcement": {
+    "failOn": ["high", "critical"],
+    "warnOn": ["medium"],
+    "requiredScanners": ["secrets", "dependencies"],
+    "scannerFailureModes": {
+      "secrets": "fail",
+      "dependencies": "fail"
+    }
+  },
+  "lock": ["requiredScanners"]
+}

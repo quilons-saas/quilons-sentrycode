@@ -1,0 +1,10 @@
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+  - script: npm install --no-save @quilons/sentrycode@0.1.0
+    displayName: Install SentryCode
+  - script: npx --no-install sentrycode check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
+    displayName: SentryCode

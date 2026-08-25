@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "quilons.sentrycode",
+  "product": "QUILONS SentryCode",
+  "apiVersion": "1.0.0",
+  "standalone": true,
+  "capabilities": [
+    "sentrycode.scan",
+    "sentrycode.findings",
+    "sentrycode.evidence",
+    "sentrycode.policy",
+    "sentrycode.waivers",
+    "sentrycode.health",
+    "sentrycode.automotive.findings",
+    "sentrycode.automotive.evidence",
+    "sentrycode.external-sast",
+    "sentrycode.git-governance",
+    "sentrycode.secrets.precommit",
+    "sentrycode.intelligence.sync",
+    "sentrycode.auth.scoped"
+  ],
+  "integrationRule": "Governed/versioned capability APIs and events only; no cross-module database access"
+}

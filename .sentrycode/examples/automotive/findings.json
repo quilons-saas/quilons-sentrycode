@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "standard": "misra-c",
+  "tool": { "name": "example-approved-analyzer", "version": "1.0.0" },
+  "findings": [
+    {
+      "ruleId": "RULE-ID-FROM-LICENSED-RULESET",
+      "message": "Example analyzer finding. SentryCode stores the analyzer message and rule identifier, not copyrighted rule text.",
+      "severity": "warning",
+      "path": "src/example.c",
+      "line": 42,
+      "tags": ["cybersecurity"]
+    }
+  ]
+}
