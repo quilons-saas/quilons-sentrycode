@@ -13,9 +13,11 @@ const dependencyFailure: ScannerResult = {
   error: 'database unavailable'
 };
 const secrets: ScannerResult = { scanner: 'secrets', findings: [], evidence: [], durationMs: 1, status: 'success' };
+const sast: ScannerResult = { scanner: 'sast', findings: [], evidence: [], durationMs: 1, status: 'success' };
+const gitAssurance: ScannerResult = { scanner: 'git-assurance', findings: [], evidence: [], durationMs: 1, status: 'success' };
 
 test('required scanner failure fails closed by default', () => {
-  const result = evaluatePolicy(structuredClone(DEFAULT_CONFIG), [secrets, dependencyFailure], [], new Date('2026-08-25T00:00:00Z'));
+  const result = evaluatePolicy(structuredClone(DEFAULT_CONFIG), [secrets, dependencyFailure, sast, gitAssurance], [], new Date('2026-08-25T00:00:00Z'));
   assert.equal(result.decision, 'FAIL');
   assert.match(result.reasons.join(' '), /failed closed/);
 });
@@ -23,7 +25,7 @@ test('required scanner failure fails closed by default', () => {
 test('scanner failure can be configured to warn', () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.policy.scannerFailureModes.dependencies = 'warn';
-  const result = evaluatePolicy(config, [secrets, dependencyFailure], [], new Date('2026-08-25T00:00:00Z'));
+  const result = evaluatePolicy(config, [secrets, dependencyFailure, sast, gitAssurance], [], new Date('2026-08-25T00:00:00Z'));
   assert.equal(result.decision, 'WARN');
 });
 
@@ -37,7 +39,7 @@ test('required scanner skipped by configuration is treated as not run', () => {
     status: 'skipped',
     error: 'scanner disabled by configuration'
   };
-  const result = evaluatePolicy(structuredClone(DEFAULT_CONFIG), [secrets, skipped], [], new Date('2026-08-25T00:00:00Z'));
+  const result = evaluatePolicy(structuredClone(DEFAULT_CONFIG), [secrets, skipped, sast, gitAssurance], [], new Date('2026-08-25T00:00:00Z'));
   assert.equal(result.decision, 'FAIL');
   assert.match(result.reasons.join(' '), /did not run/);
 });

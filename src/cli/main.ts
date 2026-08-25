@@ -6,6 +6,12 @@ import { loadConfig } from '../config/load.js';
 import { runScan } from '../core/engine.js';
 import { SecretsScanner } from '../scanners/secrets/scanner.js';
 import { DependencyScanner } from '../scanners/dependencies/scanner.js';
+import { SastScanner } from '../scanners/sast/scanner.js';
+import { GitAssuranceScanner } from '../scanners/git/scanner.js';
+import { ProvenanceScanner } from '../scanners/provenance.js';
+import { renderSarif } from '../reporting/sarif.js';
+import { buildStatement, collectArtifacts, signStatement, verifyAttestation, type SignedAttestation } from '../provenance/attestation.js';
+import { readFile } from 'node:fs/promises';
 import { discoverDependencies } from '../dependencies/discover.js';
 import { dependencySnapshotAtRef, diffDependencies } from '../dependencies/diff.js';
 import { cyclonedxSbom, spdxSbom } from '../sbom/generate.js';
@@ -18,24 +24,29 @@ import { EXIT_CODES } from './exit-codes.js';
 import type { PolicyContext, ScanReport } from '../core/types.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; }
-interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json'; }
+interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
 interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
 interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
-interface PolicyOptions extends CommonOptions { command: 'policy-validate' | 'policy-evaluate'; format: 'console' | 'json'; }
-interface ReleaseOptions extends CommonOptions { command: 'release-check'; format: 'console' | 'json'; }
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions;
+interface PolicyOptions extends CommonOptions { command: 'policy-validate' | 'policy-evaluate'; format: 'console' | 'json' | 'sarif'; }
+interface ReleaseOptions extends CommonOptions { command: 'release-check'; format: 'console' | 'json' | 'sarif'; }
+interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'; artifact: string[]; key?: string; }
+interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
+
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
 
 Usage:
-  sentrycode scan [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
-  sentrycode check [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+  sentrycode scan [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
+  sentrycode check [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
   sentrycode sbom [path] [--config FILE] [--format cyclonedx|spdx] [--output FILE]
   sentrycode dependencies diff [path] --base REF [--head REF] [--format console|json] [--output FILE]
   sentrycode policy validate [path] [--config FILE] [--service NAME] [--format console|json]
   sentrycode policy evaluate [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
-  sentrycode release check [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+  sentrycode release check [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
+  sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
+  sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
 
 Commands:
   scan               Scan repository and evaluate policy.
@@ -45,6 +56,8 @@ Commands:
   policy validate    Validate and resolve hierarchical policy documents.
   policy evaluate    Run scanners and show the effective policy decision.
   release check      Enforce the release gate and emit release.gate evidence.
+  provenance attest  Generate in-toto/SLSA-shaped provenance and optional signature.
+  provenance verify  Verify a signed provenance attestation.
 
 Exit codes:
   0 PASS/WARN/success
@@ -68,6 +81,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'policy' && argv[1] === 'validate') { command = 'policy-validate'; offset = 2; }
   else if (argv[0] === 'policy' && argv[1] === 'evaluate') { command = 'policy-evaluate'; offset = 2; }
   else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
+  else if (argv[0] === 'provenance' && argv[1] === 'attest') { command = 'provenance-attest'; offset = 2; }
+  else if (argv[0] === 'provenance' && argv[1] === 'verify') { command = 'provenance-verify'; offset = 2; }
   else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
@@ -78,7 +93,11 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let base: string | undefined;
   let head = 'HEAD';
   let positionalUsed = false;
-  let scanFormat: 'console' | 'json' = 'console';
+  let scanFormat: 'console' | 'json' | 'sarif' = 'console';
+  const artifacts: string[] = [];
+  let key: string | undefined;
+  let attestation: string | undefined;
+  let publicKey: string | undefined;
   let sbomFormat: 'cyclonedx' | 'spdx' = 'cyclonedx';
 
   for (let i = offset; i < argv.length; i += 1) {
@@ -88,13 +107,17 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--service') { service = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--base') { base = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--head') { head = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--artifact') { artifacts.push(requireValue(argv, i, arg)); i += 1; }
+    else if (arg === '--key') { key = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--attestation') { attestation = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--public-key') { publicKey = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--format') {
       const value = requireValue(argv, i, arg); i += 1;
       if (command === 'sbom') {
         if (value !== 'cyclonedx' && value !== 'spdx') throw new Error('--format for sbom must be cyclonedx or spdx');
         sbomFormat = value;
       } else {
-        if (value !== 'console' && value !== 'json') throw new Error('--format must be console or json');
+        if (value !== 'console' && value !== 'json' && value !== 'sarif') throw new Error('--format must be console, json, or sarif');
         scanFormat = value;
       }
     } else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -105,9 +128,12 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}) };
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
+    if (scanFormat === 'sarif') throw new Error('dependencies diff does not support SARIF format');
     return { command, ...common, base, head, format: scanFormat };
   }
   if (command === 'sbom') return { command, ...common, format: sbomFormat };
+  if (command === 'provenance-attest') { if (!artifacts.length) throw new Error('provenance attest requires at least one --artifact FILE'); return { command, ...common, artifact: artifacts, ...(key ? { key } : {}) }; }
+  if (command === 'provenance-verify') { if (!attestation || !publicKey) throw new Error('provenance verify requires --attestation FILE and --public-key FILE'); return { command, ...common, attestation, publicKey }; }
   if (command === 'policy-validate' || command === 'policy-evaluate' || command === 'release-check') {
     return { command, ...common, format: scanFormat };
   }
@@ -191,6 +217,23 @@ async function main(): Promise<number> {
     try { config = await loadConfig(repository.root, options.config); }
     catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
 
+    if (options.command === 'provenance-verify') {
+      const raw = JSON.parse(await readFile(resolve(repository.root, options.attestation), 'utf8')) as SignedAttestation;
+      const ok = await verifyAttestation(raw, resolve(repository.root, options.publicKey));
+      process.stdout.write(`${ok ? 'PASS' : 'FAIL'} provenance signature\n`);
+      return ok ? EXIT_CODES.PASS : EXIT_CODES.POLICY_FAILURE;
+    }
+
+    if (options.command === 'provenance-attest') {
+      const artifacts = await collectArtifacts(repository.root, options.artifact);
+      const statement = buildStatement(repository, artifacts);
+      const privateKey = options.key ? resolve(repository.root, options.key) : (config.provenance.signingPrivateKeyFile ? resolve(repository.root, config.provenance.signingPrivateKeyFile) : undefined);
+      const attestation = await signStatement(statement, privateKey);
+      const rendered = `${JSON.stringify(attestation, null, 2)}\n`;
+      if (options.output) console.log(`Provenance attestation written: ${await writeOutput(repository.root, options.output, rendered)}`); else process.stdout.write(rendered);
+      return EXIT_CODES.PASS;
+    }
+
     if (options.command === 'sbom') {
       const snapshot = await discoverDependencies(repository.root);
       const components = snapshot.components.filter((item) => config.dependencies.includeDev || !item.dev);
@@ -218,7 +261,7 @@ async function main(): Promise<number> {
     const report = await runScan({
       repository,
       config,
-      scanners: [new SecretsScanner(), new DependencyScanner()],
+      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new GitAssuranceScanner(), new ProvenanceScanner()],
       ...(options.service ? { service: options.service } : {})
     });
 
@@ -235,20 +278,19 @@ async function main(): Promise<number> {
       const payload = { release: release.decision, report };
       const rendered = options.format === 'json'
         ? `${JSON.stringify(payload, null, 2)}\n`
-        : `${renderPolicyEvaluation(report)}\nRelease gate: ${release.decision.decision}\nRelease ID: ${release.decision.releaseId}\n`;
+        : options.format === 'sarif'
+          ? renderSarif(report)
+          : `${renderPolicyEvaluation(report)}\nRelease gate: ${release.decision.decision}\nRelease ID: ${release.decision.releaseId}\n`;
       if (options.output) console.log(`Release report written: ${await writeOutput(repository.root, options.output, rendered)}`);
       else process.stdout.write(rendered);
       return release.decision.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
     }
 
-    const rendered = options.format === 'json' ? renderJson(report) : (options.command === 'policy-evaluate' ? renderPolicyEvaluation(report) : `${renderConsole(report)}\n`);
+    const rendered = options.format === 'json' ? renderJson(report) : options.format === 'sarif' ? renderSarif(report) : (options.command === 'policy-evaluate' ? renderPolicyEvaluation(report) : `${renderConsole(report)}\n`);
     if (options.output) {
-      if (options.format !== 'json') {
-        console.error('--output currently requires --format json for scan/check/policy evaluate');
-        return EXIT_CODES.CONFIGURATION_FAILURE;
-      }
-      const written = await writeJsonReport(repository.root, options.output, report);
-      console.log(`SentryCode report written: ${written}`);
+      if (options.format === 'json') { const written = await writeJsonReport(repository.root, options.output, report); console.log(`SentryCode report written: ${written}`); }
+      else if (options.format === 'sarif') console.log(`SARIF report written: ${await writeOutput(repository.root, options.output, rendered)}`);
+      else { console.error('--output requires --format json or sarif for scan/check/policy evaluate'); return EXIT_CODES.CONFIGURATION_FAILURE; }
     } else process.stdout.write(rendered);
     return report.policy.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
   } catch (error) {

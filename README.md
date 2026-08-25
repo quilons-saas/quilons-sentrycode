@@ -133,3 +133,25 @@ Unpinned Python constraints are intentionally not converted into invented instal
 - `release.gate` evidence
 
 The release gate is based on the same normalized findings, evidence and effective policy used by normal SentryCode scans.
+
+## Slice 4: SAST, Git assurance, provenance and attestations
+
+SentryCode now includes native security-analysis and provenance capabilities in the standard scan pipeline:
+
+- TypeScript/JavaScript and Python SAST rules for high-risk constructs such as dynamic `eval`, shell execution, unsafe pickle deserialization, and security-sensitive weak randomness.
+- Git assurance evidence for commit author identity, commit signature state, clean-working-tree policy, and configurable author email domains.
+- A Git-provider governance adapter boundary for future branch-protection/review checks without coupling core to GitHub/GitLab/Azure DevOps.
+- `build.attestation` and `provenance.attestation` evidence generated from repository/build context.
+- Artifact SHA-256 hashing with in-toto Statement v1 / SLSA provenance-shaped attestations.
+- Optional PEM-key signing and signature verification using Node cryptography.
+- SARIF 2.1.0 output from normalized SentryCode findings.
+
+Examples:
+
+```bash
+sentrycode scan . --format sarif --output sentrycode.sarif
+sentrycode provenance attest . --artifact dist/app.js --key private.pem --output provenance.json
+sentrycode provenance verify . --attestation provenance.json --public-key public.pem
+```
+
+The built-in SAST rules are intentionally a selected baseline, not a claim to replace every specialist static-analysis engine. Future scanner integrations plug into the same normalized finding/evidence boundary.

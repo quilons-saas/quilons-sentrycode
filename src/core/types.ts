@@ -6,6 +6,7 @@ export type ScannerExecutionStatus = 'success' | 'failed' | 'skipped';
 export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
 export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
 export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
+export type SastLanguage = 'javascript' | 'typescript' | 'python';
 
 export interface RepositoryContext {
   root: string;
@@ -245,6 +246,22 @@ export interface SentryCodeConfig {
       query: string;
       policyFiles: string[];
     };
+  };
+  sast: {
+    enabled: boolean;
+    languages: SastLanguage[];
+  };
+  gitAssurance: {
+    enabled: boolean;
+    requireCleanTree: boolean;
+    requireSignedCommit: boolean;
+    allowedEmailDomains: string[];
+  };
+  provenance: {
+    enabled: boolean;
+    artifactPaths: string[];
+    signingPrivateKeyFile: string;
+    signingPublicKeyFile: string;
   };
   waivers: {
     file: string;

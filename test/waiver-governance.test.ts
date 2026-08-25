@@ -19,11 +19,14 @@ const finding: Finding = {
 };
 const scanner: ScannerResult = { scanner: 'secrets', findings: [finding], evidence: [], durationMs: 1 };
 const dependencies: ScannerResult = { scanner: 'dependencies', findings: [], evidence: [], durationMs: 1 };
+const sast: ScannerResult = { scanner: 'sast', findings: [], evidence: [], durationMs: 1 };
+const gitAssurance: ScannerResult = { scanner: 'git-assurance', findings: [], evidence: [], durationMs: 1 };
+const requiredScanners = [scanner, dependencies, sast, gitAssurance];
 
 test('approval-required waiver without approval is rejected and audited', () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.waivers.requireApproval = true;
-  const result = evaluatePolicy(config, [scanner, dependencies], [{
+  const result = evaluatePolicy(config, requiredScanners, [{
     id: 'w1', fingerprint: 'fp_1', reason: 'temporary', expiresAt: '2026-09-01T00:00:00Z'
   }], new Date('2026-08-25T00:00:00Z'));
   assert.equal(result.decision, 'FAIL');
@@ -36,7 +39,7 @@ test('approved ticketed time-bounded waiver applies under governed policy', () =
   config.waivers.requireApproval = true;
   config.waivers.requireTicket = true;
   config.waivers.maxDurationDays = 30;
-  const result = evaluatePolicy(config, [scanner, dependencies], [{
+  const result = evaluatePolicy(config, requiredScanners, [{
     id: 'w1',
     fingerprint: 'fp_1',
     reason: 'temporary',
@@ -55,7 +58,7 @@ test('approved ticketed time-bounded waiver applies under governed policy', () =
 test('waiver exceeding maximum duration is rejected', () => {
   const config = structuredClone(DEFAULT_CONFIG);
   config.waivers.maxDurationDays = 10;
-  const result = evaluatePolicy(config, [scanner, dependencies], [{
+  const result = evaluatePolicy(config, requiredScanners, [{
     id: 'w1',
     fingerprint: 'fp_1',
     reason: 'too long',

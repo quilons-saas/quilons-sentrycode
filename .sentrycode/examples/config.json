@@ -92,5 +92,25 @@
     "requireApproval": true,
     "requireTicket": true,
     "maxDurationDays": 90
+  },
+  "sast": {
+    "enabled": true,
+    "languages": [
+      "javascript",
+      "typescript",
+      "python"
+    ]
+  },
+  "gitAssurance": {
+    "enabled": true,
+    "requireCleanTree": false,
+    "requireSignedCommit": false,
+    "allowedEmailDomains": []
+  },
+  "provenance": {
+    "enabled": true,
+    "artifactPaths": [],
+    "signingPrivateKeyFile": "",
+    "signingPublicKeyFile": ""
   }
 }

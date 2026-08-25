@@ -5,6 +5,7 @@ import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/typ
 
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
+const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python']);
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -50,6 +51,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const licenses = raw.licenses === undefined ? {} : asObject(raw.licenses, 'licenses');
   const vulnerabilities = raw.vulnerabilities === undefined ? {} : asObject(raw.vulnerabilities, 'vulnerabilities');
   const sbom = raw.sbom === undefined ? {} : asObject(raw.sbom, 'sbom');
+  const sast = raw.sast === undefined ? {} : asObject(raw.sast, 'sast');
+  const gitAssurance = raw.gitAssurance === undefined ? {} : asObject(raw.gitAssurance, 'gitAssurance');
+  const provenance = raw.provenance === undefined ? {} : asObject(raw.provenance, 'provenance');
   const policy = raw.policy === undefined ? {} : asObject(raw.policy, 'policy');
   const policyContext = policy.context === undefined ? {} : asObject(policy.context, 'policy.context');
   const opa = policy.opa === undefined ? {} : asObject(policy.opa, 'policy.opa');
@@ -120,6 +124,26 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       failOnKnownExploited: typeof vulnerabilities.failOnKnownExploited === 'boolean' ? vulnerabilities.failOnKnownExploited : DEFAULT_CONFIG.vulnerabilities.failOnKnownExploited
     },
     sbom: { defaultFormat: sbomFormat },
+    sast: {
+      enabled: typeof sast.enabled === 'boolean' ? sast.enabled : DEFAULT_CONFIG.sast.enabled,
+      languages: (() => {
+        const values = stringArray(sast.languages, DEFAULT_CONFIG.sast.languages, 'sast.languages');
+        if (values.some((value) => !VALID_SAST_LANGUAGES.has(value))) throw new Error('sast.languages contains an unsupported language');
+        return values as SentryCodeConfig['sast']['languages'];
+      })()
+    },
+    gitAssurance: {
+      enabled: typeof gitAssurance.enabled === 'boolean' ? gitAssurance.enabled : DEFAULT_CONFIG.gitAssurance.enabled,
+      requireCleanTree: typeof gitAssurance.requireCleanTree === 'boolean' ? gitAssurance.requireCleanTree : DEFAULT_CONFIG.gitAssurance.requireCleanTree,
+      requireSignedCommit: typeof gitAssurance.requireSignedCommit === 'boolean' ? gitAssurance.requireSignedCommit : DEFAULT_CONFIG.gitAssurance.requireSignedCommit,
+      allowedEmailDomains: stringArray(gitAssurance.allowedEmailDomains, DEFAULT_CONFIG.gitAssurance.allowedEmailDomains, 'gitAssurance.allowedEmailDomains')
+    },
+    provenance: {
+      enabled: typeof provenance.enabled === 'boolean' ? provenance.enabled : DEFAULT_CONFIG.provenance.enabled,
+      artifactPaths: stringArray(provenance.artifactPaths, DEFAULT_CONFIG.provenance.artifactPaths, 'provenance.artifactPaths'),
+      signingPrivateKeyFile: typeof provenance.signingPrivateKeyFile === 'string' ? provenance.signingPrivateKeyFile : DEFAULT_CONFIG.provenance.signingPrivateKeyFile,
+      signingPublicKeyFile: typeof provenance.signingPublicKeyFile === 'string' ? provenance.signingPublicKeyFile : DEFAULT_CONFIG.provenance.signingPublicKeyFile
+    },
     policy: {
       failOn: (failOn as string[]).map((v) => v as Severity),
       warnOn: (warnOn as string[]).map((v) => v as Severity),

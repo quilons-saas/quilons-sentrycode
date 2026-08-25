@@ -53,14 +53,19 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   sbom: {
     defaultFormat: 'cyclonedx'
   },
+  sast: { enabled: true, languages: ['javascript', 'typescript', 'python'] },
+  gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [] },
+  provenance: { enabled: true, artifactPaths: [], signingPrivateKeyFile: '', signingPublicKeyFile: '' },
   policy: {
     failOn: ['high', 'critical'],
     warnOn: ['medium'],
-    requiredScanners: ['secrets', 'dependencies'],
+    requiredScanners: ['secrets', 'dependencies', 'sast', 'git-assurance'],
     directory: '.sentrycode/policies',
     scannerFailureModes: {
       secrets: 'fail',
-      dependencies: 'fail'
+      dependencies: 'fail',
+      sast: 'fail',
+      'git-assurance': 'fail'
     },
     context: {},
     opa: {
