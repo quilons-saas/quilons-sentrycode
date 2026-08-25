@@ -9,6 +9,8 @@ export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFai
 export type SastLanguage = 'javascript' | 'typescript' | 'python';
 export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'generic' | 'local';
 export type ScanMode = 'full' | 'incremental';
+export type AutomotiveStandard = 'misra-c' | 'misra-cpp' | 'autosar-cpp';
+export type AutomotiveEvidenceTarget = 'iso-sae-21434' | 'unece-r155' | 'unece-r156';
 
 export interface RepositoryContext {
   root: string;
@@ -301,6 +303,15 @@ export interface SentryCodeConfig {
     artifactPaths: string[];
     signingPrivateKeyFile: string;
     signingPublicKeyFile: string;
+  };
+  automotive: {
+    enabled: boolean;
+    importDirectory: string;
+    deviationsFile: string;
+    acceptedStandards: AutomotiveStandard[];
+    requireDeviationApproval: boolean;
+    requireInputs: boolean;
+    evidenceTargets: AutomotiveEvidenceTarget[];
   };
   ci: {
     enabled: boolean;

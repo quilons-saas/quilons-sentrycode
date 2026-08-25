@@ -9,6 +9,7 @@ import { DependencyScanner } from '../scanners/dependencies/scanner.js';
 import { SastScanner } from '../scanners/sast/scanner.js';
 import { GitAssuranceScanner } from '../scanners/git/scanner.js';
 import { ProvenanceScanner } from '../scanners/provenance.js';
+import { AutomotiveScanner } from '../scanners/automotive/scanner.js';
 import { renderSarif } from '../reporting/sarif.js';
 import { buildStatement, collectArtifacts, signStatement, verifyAttestation, type SignedAttestation } from '../provenance/attestation.js';
 import { readFile } from 'node:fs/promises';
@@ -481,7 +482,7 @@ async function main(): Promise<number> {
     const report = await runScan({
       repository,
       config,
-      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new GitAssuranceScanner(), new ProvenanceScanner()],
+      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new GitAssuranceScanner(), new ProvenanceScanner(), new AutomotiveScanner()],
       execution,
       ...(options.service ? { service: options.service } : {})
     });

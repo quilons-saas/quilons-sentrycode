@@ -161,5 +161,22 @@
   "operations": {
     "backupDirectory": ".sentrycode/backups",
     "retentionDays": 365
+  },
+  "automotive": {
+    "enabled": false,
+    "importDirectory": ".sentrycode/automotive/findings",
+    "deviationsFile": ".sentrycode/automotive/deviations.json",
+    "acceptedStandards": [
+      "misra-c",
+      "misra-cpp",
+      "autosar-cpp"
+    ],
+    "requireDeviationApproval": true,
+    "evidenceTargets": [
+      "iso-sae-21434",
+      "unece-r155",
+      "unece-r156"
+    ],
+    "requireInputs": true
   }
 }

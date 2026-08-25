@@ -10,7 +10,9 @@
     "sentrycode.evidence",
     "sentrycode.policy",
     "sentrycode.waivers",
-    "sentrycode.health"
+    "sentrycode.health",
+    "sentrycode.automotive.findings",
+    "sentrycode.automotive.evidence"
   ],
   "integrationRule": "Governed/versioned capability APIs and events only; no cross-module database access"
 }

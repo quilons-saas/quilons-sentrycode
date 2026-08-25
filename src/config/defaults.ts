@@ -56,6 +56,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   sast: { enabled: true, languages: ['javascript', 'typescript', 'python'] },
   gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [] },
   provenance: { enabled: true, artifactPaths: [], signingPrivateKeyFile: '', signingPublicKeyFile: '' },
+  automotive: { enabled: false, importDirectory: '.sentrycode/automotive/findings', deviationsFile: '.sentrycode/automotive/deviations.json', acceptedStandards: ['misra-c', 'misra-cpp', 'autosar-cpp'], requireDeviationApproval: true, requireInputs: true, evidenceTargets: ['iso-sae-21434', 'unece-r155', 'unece-r156'] },
   ci: { enabled: true, provider: 'auto', annotations: true },
   monorepo: { enabled: true, serviceRoots: [], discoverWorkspaces: true },
   incremental: { enabled: true, baseRef: '', headRef: 'HEAD', cacheFile: '.sentrycode/cache/incremental.json', scannerTimeoutMs: 120000 },

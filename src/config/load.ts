@@ -7,6 +7,8 @@ const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'cr
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
 const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python']);
 const VALID_CI_PROVIDERS = new Set(['auto','github','gitlab','azure-devops','jenkins','generic','local']);
+const VALID_AUTOMOTIVE_STANDARDS = new Set(['misra-c','misra-cpp','autosar-cpp']);
+const VALID_AUTOMOTIVE_TARGETS = new Set(['iso-sae-21434','unece-r155','unece-r156']);
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -55,6 +57,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const sast = raw.sast === undefined ? {} : asObject(raw.sast, 'sast');
   const gitAssurance = raw.gitAssurance === undefined ? {} : asObject(raw.gitAssurance, 'gitAssurance');
   const provenance = raw.provenance === undefined ? {} : asObject(raw.provenance, 'provenance');
+  const automotive = raw.automotive === undefined ? {} : asObject(raw.automotive, 'automotive');
   const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
   const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
   const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
@@ -151,6 +154,23 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       artifactPaths: stringArray(provenance.artifactPaths, DEFAULT_CONFIG.provenance.artifactPaths, 'provenance.artifactPaths'),
       signingPrivateKeyFile: typeof provenance.signingPrivateKeyFile === 'string' ? provenance.signingPrivateKeyFile : DEFAULT_CONFIG.provenance.signingPrivateKeyFile,
       signingPublicKeyFile: typeof provenance.signingPublicKeyFile === 'string' ? provenance.signingPublicKeyFile : DEFAULT_CONFIG.provenance.signingPublicKeyFile
+    },
+    automotive: {
+      enabled: typeof automotive.enabled === 'boolean' ? automotive.enabled : DEFAULT_CONFIG.automotive.enabled,
+      importDirectory: typeof automotive.importDirectory === 'string' ? automotive.importDirectory : DEFAULT_CONFIG.automotive.importDirectory,
+      deviationsFile: typeof automotive.deviationsFile === 'string' ? automotive.deviationsFile : DEFAULT_CONFIG.automotive.deviationsFile,
+      acceptedStandards: (() => {
+        const values = stringArray(automotive.acceptedStandards, DEFAULT_CONFIG.automotive.acceptedStandards, 'automotive.acceptedStandards');
+        if (values.some((value) => !VALID_AUTOMOTIVE_STANDARDS.has(value))) throw new Error('automotive.acceptedStandards contains an unsupported standard');
+        return values as SentryCodeConfig['automotive']['acceptedStandards'];
+      })(),
+      requireDeviationApproval: typeof automotive.requireDeviationApproval === 'boolean' ? automotive.requireDeviationApproval : DEFAULT_CONFIG.automotive.requireDeviationApproval,
+      requireInputs: typeof automotive.requireInputs === 'boolean' ? automotive.requireInputs : DEFAULT_CONFIG.automotive.requireInputs,
+      evidenceTargets: (() => {
+        const values = stringArray(automotive.evidenceTargets, DEFAULT_CONFIG.automotive.evidenceTargets, 'automotive.evidenceTargets');
+        if (values.some((value) => !VALID_AUTOMOTIVE_TARGETS.has(value))) throw new Error('automotive.evidenceTargets contains an unsupported target');
+        return values as SentryCodeConfig['automotive']['evidenceTargets'];
+      })()
     },
     ci: {
       enabled: typeof ci.enabled === 'boolean' ? ci.enabled : DEFAULT_CONFIG.ci.enabled,

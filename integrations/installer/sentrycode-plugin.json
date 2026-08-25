@@ -14,7 +14,9 @@
     "sentrycode.evidence",
     "sentrycode.policy",
     "sentrycode.waivers",
-    "sentrycode.health"
+    "sentrycode.health",
+    "sentrycode.automotive.findings",
+    "sentrycode.automotive.evidence"
   ],
   "offlineCapable": true,
   "diagnosticsCommand": "sentrycode enterprise diagnostics",
