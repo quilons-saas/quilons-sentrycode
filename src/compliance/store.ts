@@ -72,8 +72,8 @@ export class LocalComplianceStore {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
     const summaries: StoredRunSummary[] = [];
     for (const name of names.sort()) {
-      try { summaries.push(await readJson<StoredRunSummary>(resolve(runsRoot, basename(name), 'summary.json'))); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const publication = await this.getPublication(identity, basename(name));
+      if (publication) summaries.push(publication.summary);
     }
     return summaries.sort((a,b) => b.completedAt.localeCompare(a.completedAt));
   }
