@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scan": {
+    "exclude": [
+      ".git/**",
+      "node_modules/**",
+      "dist/**",
+      "coverage/**"
+    ]
+  },
+  "secrets": {
+    "enabled": true,
+    "highEntropy": true,
+    "minEntropyLength": 24,
+    "customPatterns": []
+  },
+  "policy": {
+    "failOn": ["high", "critical"],
+    "warnOn": ["medium"],
+    "requiredScanners": ["secrets"]
+  },
+  "waiversFile": ".sentrycode/waivers.json"
+}

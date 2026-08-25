@@ -1,0 +1,10 @@
+[
+  {
+    "id": "example-waiver",
+    "ruleId": "generic-secret-assignment",
+    "path": "test/fixtures/example.txt",
+    "reason": "False-positive fixture for a controlled test",
+    "author": "security@example.invalid",
+    "expiresAt": "2099-01-01T00:00:00.000Z"
+  }
+]
