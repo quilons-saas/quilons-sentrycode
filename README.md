@@ -190,3 +190,43 @@ sentrycode check . --service api --base origin/main
 
 Reference CI templates are in `integrations/`.
 
+
+## QUILONS Compliance plugin
+
+SentryCode remains standalone but can publish its authoritative scan evidence into the QUILONS Compliance integration boundary.
+
+```bash
+sentrycode compliance manifest . --format json
+sentrycode compliance health .
+sentrycode compliance ready .
+sentrycode compliance publish . --tenant tenant-a --project project-a
+sentrycode compliance runs . --tenant tenant-a --project project-a --format json
+sentrycode compliance serve .
+```
+
+The read-only capability API is versioned under `/v1`. Tenant/project scope is mandatory for run data. The API binds to loopback by default; non-loopback exposure requires a bearer token. QUILONS Compliance/CRA must not read SentryCode's storage directly.
+
+## Slice 7: offline/on-prem enterprise hardening
+
+SentryCode now has an explicit offline/on-prem operational profile rather than merely avoiding cloud dependencies.
+
+- `SENTRYCODE_OFFLINE=true` or `offline.enabled` enables fail-closed offline behavior.
+- Vulnerability intelligence can be imported from digest-verified local bundles and may require a trusted public-key signature.
+- Repository configuration can be signed and verified; signed-config enforcement blocks normal execution when integrity verification fails.
+- Compliance publications carry per-run SHA-256 integrity manifests and tampered evidence is rejected on read.
+- Enterprise operations include diagnostics, backup, restore, retention, and append-only JSONL audit events.
+- No source code is transmitted by these enterprise operations.
+
+Examples:
+
+```bash
+sentrycode intelligence import . --bundle vuln-bundle.json
+sentrycode config sign . --key private.pem
+sentrycode config verify . --public-key public.pem
+sentrycode enterprise diagnostics .
+sentrycode enterprise backup .
+sentrycode enterprise restore . --backup .sentrycode/backups/backup-...
+sentrycode enterprise retention .
+```
+
+See `docs/on-prem/OFFLINE_OPERATIONS.md` for operational guidance.

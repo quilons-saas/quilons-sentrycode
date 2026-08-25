@@ -9,3 +9,5 @@ coverage/
 .sentrycode/cache/
 .sentrycode/compliance/
 *.sentrycode-publication.json
+.sentrycode/backups/
+.sentrycode/audit/

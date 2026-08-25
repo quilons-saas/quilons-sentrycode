@@ -59,6 +59,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
   const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
   const compliance = raw.compliance === undefined ? {} : asObject(raw.compliance, 'compliance');
+  const offline = raw.offline === undefined ? {} : asObject(raw.offline, 'offline');
+  const integrity = raw.integrity === undefined ? {} : asObject(raw.integrity, 'integrity');
+  const operations = raw.operations === undefined ? {} : asObject(raw.operations, 'operations');
   const policy = raw.policy === undefined ? {} : asObject(raw.policy, 'policy');
   const policyContext = policy.context === undefined ? {} : asObject(policy.context, 'policy.context');
   const opa = policy.opa === undefined ? {} : asObject(policy.opa, 'policy.opa');
@@ -182,6 +185,22 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       listenPort: typeof compliance.listenPort === 'number' && compliance.listenPort >= 0 && compliance.listenPort <= 65535 ? compliance.listenPort : DEFAULT_CONFIG.compliance.listenPort,
       apiTokenEnv: typeof compliance.apiTokenEnv === 'string' ? compliance.apiTokenEnv : DEFAULT_CONFIG.compliance.apiTokenEnv
     },
+    offline: {
+      enabled: typeof offline.enabled === 'boolean' ? offline.enabled : DEFAULT_CONFIG.offline.enabled,
+      requireSignedIntelligenceBundles: typeof offline.requireSignedIntelligenceBundles === 'boolean' ? offline.requireSignedIntelligenceBundles : DEFAULT_CONFIG.offline.requireSignedIntelligenceBundles,
+      intelligencePublicKeyFile: typeof offline.intelligencePublicKeyFile === 'string' ? offline.intelligencePublicKeyFile : DEFAULT_CONFIG.offline.intelligencePublicKeyFile
+    },
+    integrity: {
+      requireSignedConfig: typeof integrity.requireSignedConfig === 'boolean' ? integrity.requireSignedConfig : DEFAULT_CONFIG.integrity.requireSignedConfig,
+      configSignatureFile: typeof integrity.configSignatureFile === 'string' ? integrity.configSignatureFile : DEFAULT_CONFIG.integrity.configSignatureFile,
+      publicKeyFile: typeof integrity.publicKeyFile === 'string' ? integrity.publicKeyFile : DEFAULT_CONFIG.integrity.publicKeyFile,
+      auditLogFile: typeof integrity.auditLogFile === 'string' ? integrity.auditLogFile : DEFAULT_CONFIG.integrity.auditLogFile,
+      evidenceManifests: typeof integrity.evidenceManifests === 'boolean' ? integrity.evidenceManifests : DEFAULT_CONFIG.integrity.evidenceManifests
+    },
+    operations: {
+      backupDirectory: typeof operations.backupDirectory === 'string' ? operations.backupDirectory : DEFAULT_CONFIG.operations.backupDirectory,
+      retentionDays: typeof operations.retentionDays === 'number' && operations.retentionDays > 0 ? operations.retentionDays : DEFAULT_CONFIG.operations.retentionDays
+    },
     policy: {
       failOn: (failOn as string[]).map((v) => v as Severity),
       warnOn: (warnOn as string[]).map((v) => v as Severity),
@@ -229,6 +248,7 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
   if (env.SENTRYCODE_COMPLIANCE_PROJECT !== undefined) next.compliance.project = env.SENTRYCODE_COMPLIANCE_PROJECT;
   if (env.SENTRYCODE_COMPLIANCE_ENDPOINT !== undefined) next.compliance.endpoint = env.SENTRYCODE_COMPLIANCE_ENDPOINT;
   if (env.SENTRYCODE_DISABLE_COMPLIANCE_PUBLISH === 'true') next.compliance.enabled = false;
+  if (env.SENTRYCODE_OFFLINE === 'true') next.offline.enabled = true;
   return next;
 }
 

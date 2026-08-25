@@ -145,5 +145,21 @@
     "listenHost": "127.0.0.1",
     "listenPort": 7786,
     "apiTokenEnv": "SENTRYCODE_PLUGIN_API_TOKEN"
+  },
+  "offline": {
+    "enabled": true,
+    "requireSignedIntelligenceBundles": false,
+    "intelligencePublicKeyFile": ""
+  },
+  "integrity": {
+    "requireSignedConfig": false,
+    "configSignatureFile": ".sentrycode/config.sig.json",
+    "publicKeyFile": "",
+    "auditLogFile": ".sentrycode/audit/events.jsonl",
+    "evidenceManifests": true
+  },
+  "operations": {
+    "backupDirectory": ".sentrycode/backups",
+    "retentionDays": 365
   }
 }

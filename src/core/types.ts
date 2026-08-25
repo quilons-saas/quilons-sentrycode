@@ -331,6 +331,22 @@ export interface SentryCodeConfig {
     listenPort: number;
     apiTokenEnv: string;
   };
+  offline: {
+    enabled: boolean;
+    requireSignedIntelligenceBundles: boolean;
+    intelligencePublicKeyFile: string;
+  };
+  integrity: {
+    requireSignedConfig: boolean;
+    configSignatureFile: string;
+    publicKeyFile: string;
+    auditLogFile: string;
+    evidenceManifests: boolean;
+  };
+  operations: {
+    backupDirectory: string;
+    retentionDays: number;
+  };
   waivers: {
     file: string;
     requireApproval: boolean;

@@ -34,6 +34,11 @@ import { LocalComplianceStore } from '../compliance/store.js';
 import { HttpCompliancePublisher } from '../compliance/publisher.js';
 import { SentryCodeComplianceService } from '../compliance/service.js';
 import { startComplianceServer } from '../compliance/server.js';
+import { importVulnerabilityBundle } from '../enterprise/intelligence.js';
+import { signFile, verifyFile } from '../enterprise/integrity.js';
+import { appendAuditEvent } from '../enterprise/audit.js';
+import { createBackup, restoreBackup, applyRetention, applyComplianceRetention } from '../enterprise/backup.js';
+import { runDiagnostics } from '../enterprise/diagnostics.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
@@ -45,8 +50,9 @@ interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
+interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'intelligence-import' | 'config-sign' | 'config-verify'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | EnterpriseOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
@@ -69,6 +75,13 @@ Usage:
   sentrycode compliance runs [path] [--tenant ID] [--project ID] [--format console|json]
   sentrycode compliance run [path] --run-id ID [--tenant ID] [--project ID] [--format console|json]
   sentrycode compliance serve [path]
+  sentrycode intelligence import [path] --bundle FILE [--public-key PUBLIC.pem]
+  sentrycode enterprise diagnostics [path] [--format console|json]
+  sentrycode enterprise backup [path]
+  sentrycode enterprise restore [path] --backup PATH
+  sentrycode enterprise retention [path]
+  sentrycode config sign [path] --key PRIVATE.pem
+  sentrycode config verify [path] --public-key PUBLIC.pem
 
 Commands:
   scan               Scan repository and evaluate policy.
@@ -88,6 +101,12 @@ Commands:
   compliance runs     List stored SentryCode runs for one tenant/project scope.
   compliance run      Read one stored publication within one tenant/project scope.
   compliance serve    Serve the versioned plugin capability API for QUILONS Compliance.
+  intelligence import Import an offline vulnerability intelligence bundle.
+  enterprise diagnostics Run on-prem/offline readiness diagnostics.
+  enterprise backup   Back up SentryCode operational state.
+  enterprise restore  Restore SentryCode operational state from a backup.
+  enterprise retention Apply configured retention to backups and local evidence.
+  config sign/verify  Sign or verify repository SentryCode configuration.
 
 Exit codes:
   0 PASS/WARN/success
@@ -120,6 +139,13 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'compliance' && argv[1] === 'runs') { command = 'compliance-runs'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'run') { command = 'compliance-run'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'serve') { command = 'compliance-serve'; offset = 2; }
+  else if (argv[0] === 'intelligence' && argv[1] === 'import') { command = 'intelligence-import'; offset = 2; }
+  else if (argv[0] === 'enterprise' && argv[1] === 'diagnostics') { command = 'enterprise-diagnostics'; offset = 2; }
+  else if (argv[0] === 'enterprise' && argv[1] === 'backup') { command = 'enterprise-backup'; offset = 2; }
+  else if (argv[0] === 'enterprise' && argv[1] === 'restore') { command = 'enterprise-restore'; offset = 2; }
+  else if (argv[0] === 'enterprise' && argv[1] === 'retention') { command = 'enterprise-retention'; offset = 2; }
+  else if (argv[0] === 'config' && argv[1] === 'sign') { command = 'config-sign'; offset = 2; }
+  else if (argv[0] === 'config' && argv[1] === 'verify') { command = 'config-verify'; offset = 2; }
   else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
@@ -141,6 +167,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let tenant: string | undefined;
   let project: string | undefined;
   let runId: string | undefined;
+  let bundle: string | undefined;
+  let backup: string | undefined;
 
   for (let i = offset; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -154,6 +182,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--tenant') { tenant = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--project') { project = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--run-id') { runId = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--bundle') { bundle = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--backup') { backup = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--artifact') { artifacts.push(requireValue(argv, i, arg)); i += 1; }
     else if (arg === '--key') { key = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--attestation') { attestation = requireValue(argv, i, arg); i += 1; }
@@ -177,6 +207,14 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
     if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
     return { command: command as ComplianceOptions['command'], ...common, format: scanFormat as 'console' | 'json' };
+  }
+  if (command.startsWith('enterprise-') || command === 'intelligence-import' || command === 'config-sign' || command === 'config-verify') {
+    if (scanFormat === 'sarif') throw new Error('enterprise commands do not support SARIF format');
+    if (command === 'intelligence-import' && !bundle) throw new Error('intelligence import requires --bundle FILE');
+    if (command === 'enterprise-restore' && !backup) throw new Error('enterprise restore requires --backup PATH');
+    if (command === 'config-sign' && !key) throw new Error('config sign requires --key PRIVATE.pem');
+    if (command === 'config-verify' && !publicKey) throw new Error('config verify requires --public-key PUBLIC.pem');
+    return { command: command as EnterpriseOptions['command'], ...common, format: scanFormat as 'console' | 'json', ...(bundle ? { bundle } : {}), ...(backup ? { backup } : {}), ...(key ? { key } : {}), ...(publicKey ? { publicKey } : {}) };
   }
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
@@ -290,6 +328,50 @@ async function main(): Promise<number> {
     let config;
     try { config = await loadConfig(repository.root, options.config); }
     catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+
+    const configPath = options.config ?? '.sentrycode/config.json';
+    if (config.integrity.requireSignedConfig && options.command !== 'config-sign') {
+      if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      const ok = await verifyFile(repository.root, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
+      if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+    }
+
+    if (options.command === 'config-sign') {
+      const signature = await signFile(repository.root, configPath, options.key!, config.integrity.configSignatureFile);
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'config.signed', { file: configPath, fingerprint: signature.publicKeyFingerprint });
+      process.stdout.write(`${JSON.stringify(signature, null, 2)}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'config-verify') {
+      const ok = await verifyFile(repository.root, configPath, config.integrity.configSignatureFile, options.publicKey!);
+      process.stdout.write(`${ok ? 'PASS' : 'FAIL'} configuration signature\n`); return ok ? EXIT_CODES.PASS : EXIT_CODES.POLICY_FAILURE;
+    }
+    if (options.command === 'intelligence-import') {
+      const result = await importVulnerabilityBundle(repository.root, options.bundle!, config.vulnerabilities.databaseFile, { requireSignature: config.offline.requireSignedIntelligenceBundles, ...(options.publicKey || config.offline.intelligencePublicKeyFile ? { publicKeyFile: options.publicKey ?? config.offline.intelligencePublicKeyFile } : {}) });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'intelligence.imported', { id: result.id, version: result.version, advisoryCount: result.advisoryCount });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'enterprise-diagnostics') {
+      const checks = await runDiagnostics(repository.root, config);
+      const ok = checks.every((item) => item.ok);
+      const rendered = options.format === 'json' ? `${JSON.stringify({ ok, checks }, null, 2)}\n` : `${checks.map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.id}: ${item.detail}`).join('\n')}\n`;
+      process.stdout.write(rendered); return ok ? EXIT_CODES.PASS : EXIT_CODES.RUNTIME_FAILURE;
+    }
+    if (options.command === 'enterprise-backup') {
+      const path = await createBackup(repository.root, ['.sentrycode/config.json', config.policy.directory, config.waivers.file, config.vulnerabilities.databaseFile, config.compliance.storeDirectory, config.integrity.auditLogFile], config.operations.backupDirectory);
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.created', { path });
+      process.stdout.write(`Backup created: ${path}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'enterprise-restore') {
+      await restoreBackup(repository.root, options.backup!, { 'config.json': '.sentrycode/config.json', 'policies': config.policy.directory, 'waivers.json': config.waivers.file, 'vulnerability-db.json': config.vulnerabilities.databaseFile, 'compliance': config.compliance.storeDirectory, 'events.jsonl': config.integrity.auditLogFile });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.restored', { path: options.backup! });
+      process.stdout.write(`Backup restored: ${options.backup}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'enterprise-retention') {
+      const backups = await applyRetention(repository.root, config.operations.backupDirectory, config.operations.retentionDays);
+      const evidence = await applyComplianceRetention(repository.root, config.compliance.storeDirectory, config.operations.retentionDays);
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'retention.applied', { backupEntriesRemoved: backups.length, evidenceEntriesRemoved: evidence.length });
+      process.stdout.write(`${JSON.stringify({ backupsRemoved: backups, evidenceEntriesRemoved: evidence }, null, 2)}\n`); return EXIT_CODES.PASS;
+    }
 
     if (options.command === 'compliance-manifest' || options.command === 'compliance-health' || options.command === 'compliance-ready' || options.command === 'compliance-runs' || options.command === 'compliance-run' || options.command === 'compliance-serve') {
       const service = new SentryCodeComplianceService(repository.root, config.compliance.storeDirectory);

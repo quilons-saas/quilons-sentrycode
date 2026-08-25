@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import type { ComplianceIdentity, CompliancePublication, StoredRunSummary } from './contracts.js';
 import { tenantStoreRoot } from './scope.js';
+import { writeIntegrityManifest, verifyIntegrityManifest } from '../enterprise/evidence-integrity.js';
 
 function safeRunId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error('Invalid run ID');
@@ -38,11 +39,14 @@ export class LocalComplianceStore {
     await atomicJson(resolve(dir, 'evidence.json'), publication.evidence);
     await atomicJson(resolve(dir, 'report.json'), publication.report);
     await atomicJson(resolve(dir, 'events.json'), publication.events);
+    await writeIntegrityManifest(dir);
   }
 
   async getPublication(identity: ComplianceIdentity, runId: string): Promise<CompliancePublication | null> {
     const dir = this.runDir(identity, runId);
     try {
+      const integrity = await verifyIntegrityManifest(dir);
+      if (!integrity.ok) throw new Error(`Compliance run ${runId} failed integrity verification: ${integrity.mismatches.join(', ')}`);
       const [summary, evidence, report, events] = await Promise.all([
         readJson<CompliancePublication['summary']>(resolve(dir, 'summary.json')),
         readJson<CompliancePublication['evidence']>(resolve(dir, 'evidence.json')),

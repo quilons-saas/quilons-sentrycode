@@ -9,14 +9,14 @@ interface VulnerabilityDatabaseFile {
   advisories: VulnerabilityAdvisory[];
 }
 
-export async function loadVulnerabilityDatabase(root: string, path: string): Promise<{ advisories: VulnerabilityAdvisory[]; updatedAt?: string }> {
+export async function loadVulnerabilityDatabase(root: string, path: string): Promise<{ advisories: VulnerabilityAdvisory[]; updatedAt?: string; available: boolean }> {
   const absolute = resolve(root, path);
   try {
     const parsed = JSON.parse(await readFile(absolute, 'utf8')) as VulnerabilityDatabaseFile;
     if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.advisories)) throw new Error('Unsupported vulnerability DB schema');
-    return { advisories: parsed.advisories, ...(parsed.updatedAt ? { updatedAt: parsed.updatedAt } : {}) };
+    return { advisories: parsed.advisories, ...(parsed.updatedAt ? { updatedAt: parsed.updatedAt } : {}), available: true };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { advisories: [] };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { advisories: [], available: false };
     throw error;
   }
 }

@@ -8,5 +8,17 @@
   "readinessCommand": "sentrycode compliance ready",
   "manifestCommand": "sentrycode compliance manifest --format json",
   "requiredCapabilities": [],
-  "provides": ["sentrycode.scan", "sentrycode.findings", "sentrycode.evidence", "sentrycode.policy", "sentrycode.waivers", "sentrycode.health"]
+  "provides": [
+    "sentrycode.scan",
+    "sentrycode.findings",
+    "sentrycode.evidence",
+    "sentrycode.policy",
+    "sentrycode.waivers",
+    "sentrycode.health"
+  ],
+  "offlineCapable": true,
+  "diagnosticsCommand": "sentrycode enterprise diagnostics",
+  "backupCommand": "sentrycode enterprise backup",
+  "retentionCommand": "sentrycode enterprise retention",
+  "intelligenceImportCommand": "sentrycode intelligence import --bundle <file>"
 }
