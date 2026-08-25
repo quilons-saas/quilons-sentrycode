@@ -26,9 +26,16 @@ import { renderCiAnnotations } from '../ci/annotations.js';
 import { buildIncrementalPlan } from '../incremental/plan.js';
 import { writeIncrementalCache } from '../incremental/cache.js';
 import { discoverServices } from '../monorepo/discover.js';
-import type { PolicyContext, ScanReport } from '../core/types.js';
+import type { PolicyContext, ScanReport, SentryCodeConfig } from '../core/types.js';
+import { complianceIdentity } from '../compliance/scope.js';
+import { loadPluginManifest } from '../compliance/manifest.js';
+import { buildPublication } from '../compliance/publication.js';
+import { LocalComplianceStore } from '../compliance/store.js';
+import { HttpCompliancePublisher } from '../compliance/publisher.js';
+import { SentryCodeComplianceService } from '../compliance/service.js';
+import { startComplianceServer } from '../compliance/server.js';
 
-interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; }
+interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
 interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
 interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
@@ -37,8 +44,9 @@ interface ReleaseOptions extends CommonOptions { command: 'release-check'; forma
 interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'; artifact: string[]; key?: string; }
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
+interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
@@ -54,6 +62,13 @@ Usage:
   sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
   sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
   sentrycode services [path] [--format console|json]
+  sentrycode compliance manifest [path] [--format console|json]
+  sentrycode compliance health [path] [--format console|json]
+  sentrycode compliance ready [path] [--format console|json]
+  sentrycode compliance publish [path] [--tenant ID] [--project ID] [--service NAME] [--format console|json]
+  sentrycode compliance runs [path] [--tenant ID] [--project ID] [--format console|json]
+  sentrycode compliance run [path] --run-id ID [--tenant ID] [--project ID] [--format console|json]
+  sentrycode compliance serve [path]
 
 Commands:
   scan               Scan repository and evaluate policy.
@@ -66,6 +81,13 @@ Commands:
   provenance attest  Generate in-toto/SLSA-shaped provenance and optional signature.
   provenance verify  Verify a signed provenance attestation.
   services           Discover monorepo services/packages.
+  compliance manifest Expose the versioned QUILONS Compliance plugin manifest.
+  compliance health   Lightweight plugin health probe.
+  compliance ready    Installer/platform readiness probe.
+  compliance publish  Run SentryCode and publish tenant/project-scoped evidence.
+  compliance runs     List stored SentryCode runs for one tenant/project scope.
+  compliance run      Read one stored publication within one tenant/project scope.
+  compliance serve    Serve the versioned plugin capability API for QUILONS Compliance.
 
 Exit codes:
   0 PASS/WARN/success
@@ -91,6 +113,13 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'attest') { command = 'provenance-attest'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'verify') { command = 'provenance-verify'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'manifest') { command = 'compliance-manifest'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'health') { command = 'compliance-health'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'ready') { command = 'compliance-ready'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'publish') { command = 'compliance-publish'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'runs') { command = 'compliance-runs'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'run') { command = 'compliance-run'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'serve') { command = 'compliance-serve'; offset = 2; }
   else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
@@ -109,6 +138,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let sbomFormat: 'cyclonedx' | 'spdx' = 'cyclonedx';
   let full = false;
   let ci = false;
+  let tenant: string | undefined;
+  let project: string | undefined;
+  let runId: string | undefined;
 
   for (let i = offset; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -119,6 +151,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--head') { head = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--full') { full = true; }
     else if (arg === '--ci') { ci = true; }
+    else if (arg === '--tenant') { tenant = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--project') { project = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--run-id') { runId = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--artifact') { artifacts.push(requireValue(argv, i, arg)); i += 1; }
     else if (arg === '--key') { key = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--attestation') { attestation = requireValue(argv, i, arg); i += 1; }
@@ -137,7 +172,12 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else throw new Error(`Unexpected argument: ${arg}`);
   }
 
-  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}) };
+  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}) };
+  if (command.startsWith('compliance-')) {
+    if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
+    if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
+    return { command: command as ComplianceOptions['command'], ...common, format: scanFormat as 'console' | 'json' };
+  }
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
     if (scanFormat === 'sarif') throw new Error('dependencies diff does not support SARIF format');
@@ -153,7 +193,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   if (command === 'policy-validate' || command === 'policy-evaluate' || command === 'release-check') {
     return { command, ...common, format: scanFormat };
   }
-  return { command, ...common, format: scanFormat };
+  if (command === 'scan' || command === 'check') return { command, ...common, format: scanFormat };
+  throw new Error(`Unsupported command: ${command}`);
 }
 
 async function writeOutput(root: string, output: string, content: string): Promise<string> {
@@ -209,6 +250,23 @@ Policy sources: ${policy.sourceDocuments.map((item) => `${item.id}@${item.versio
 `;
 }
 
+function resolveComplianceIdentity(config: SentryCodeConfig, options: CommonOptions) {
+  return complianceIdentity(options.tenant ?? config.compliance.tenant, options.project ?? config.compliance.project);
+}
+
+async function publishCompliance(root: string, config: SentryCodeConfig, options: CommonOptions, report: ScanReport) {
+  const identity = resolveComplianceIdentity(config, options);
+  const manifest = await loadPluginManifest(root);
+  const publication = buildPublication(identity, report, manifest.productVersion);
+  const store = new LocalComplianceStore(root, config.compliance.storeDirectory);
+  await store.publish(identity, publication);
+  if (config.compliance.endpoint) {
+    const token = process.env[config.compliance.tokenEnv] ?? '';
+    await new HttpCompliancePublisher(config.compliance.endpoint, token, config.compliance.timeoutMs).publish(publication);
+  }
+  return publication;
+}
+
 async function main(): Promise<number> {
   let options: CliOptions | 'help';
   try { options = parseArgs(process.argv.slice(2)); }
@@ -232,6 +290,34 @@ async function main(): Promise<number> {
     let config;
     try { config = await loadConfig(repository.root, options.config); }
     catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+
+    if (options.command === 'compliance-manifest' || options.command === 'compliance-health' || options.command === 'compliance-ready' || options.command === 'compliance-runs' || options.command === 'compliance-run' || options.command === 'compliance-serve') {
+      const service = new SentryCodeComplianceService(repository.root, config.compliance.storeDirectory);
+      if (options.command === 'compliance-serve') {
+        const token = process.env[config.compliance.apiTokenEnv] ?? '';
+        const running = await startComplianceServer(service, { host: config.compliance.listenHost, port: config.compliance.listenPort, ...(token ? { token } : {}) });
+        process.stdout.write(`SentryCode Compliance API listening on ${running.host}:${running.port}\n`);
+        await new Promise<void>(() => {});
+        return EXIT_CODES.PASS;
+      }
+      let value: unknown;
+      if (options.command === 'compliance-manifest') value = await service.manifest();
+      else if (options.command === 'compliance-health') value = service.health();
+      else if (options.command === 'compliance-ready') value = await service.readiness();
+      else {
+        const identity = resolveComplianceIdentity(config, options);
+        if (options.command === 'compliance-runs') value = await service.listRuns(identity);
+        else value = await service.getRun(identity, options.runId!);
+      }
+      if (options.format === 'json') process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+      else if (options.command === 'compliance-health') process.stdout.write('PASS SentryCode Compliance plugin health\n');
+      else if (options.command === 'compliance-ready') {
+        const readiness = value as Awaited<ReturnType<SentryCodeComplianceService['readiness']>>;
+        process.stdout.write(`${readiness.ready ? 'PASS' : 'FAIL'} SentryCode Compliance plugin readiness\n${readiness.checks.map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.id}: ${item.detail}`).join('\n')}\n`);
+        if (!readiness.ready) return EXIT_CODES.RUNTIME_FAILURE;
+      } else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+      return EXIT_CODES.PASS;
+    }
 
     if (options.command === 'services') {
       const services = await discoverServices(repository.root, config);
@@ -317,6 +403,18 @@ async function main(): Promise<number> {
       execution,
       ...(options.service ? { service: options.service } : {})
     });
+
+    if (options.command === 'compliance-publish' || config.compliance.enabled) {
+      const publication = await publishCompliance(repository.root, config, options, report);
+      if (options.command === 'compliance-publish') {
+        const rendered = options.format === 'json'
+          ? `${JSON.stringify(publication, null, 2)}\n`
+          : `SentryCode Compliance publication\nRun: ${publication.summary.runId}\nTenant: ${publication.summary.tenant}\nProject: ${publication.summary.project}\nDecision: ${publication.summary.decision}\nEvidence: ${publication.summary.evidenceCount}\n`;
+        if (options.output) console.log(`Compliance publication written: ${await writeOutput(repository.root, options.output, rendered)}`);
+        else process.stdout.write(rendered);
+        return publication.summary.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
+      }
+    }
 
     if (options.command === 'release-check') {
       const release = buildReleaseDecision(report);

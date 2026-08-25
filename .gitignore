@@ -7,3 +7,5 @@ coverage/
 
 .tmp-test/
 .sentrycode/cache/
+.sentrycode/compliance/
+*.sentrycode-publication.json

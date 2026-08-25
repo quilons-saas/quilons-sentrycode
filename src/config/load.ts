@@ -58,6 +58,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
   const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
   const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
+  const compliance = raw.compliance === undefined ? {} : asObject(raw.compliance, 'compliance');
   const policy = raw.policy === undefined ? {} : asObject(raw.policy, 'policy');
   const policyContext = policy.context === undefined ? {} : asObject(policy.context, 'policy.context');
   const opa = policy.opa === undefined ? {} : asObject(policy.opa, 'policy.opa');
@@ -169,6 +170,18 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       cacheFile: typeof incremental.cacheFile === 'string' ? incremental.cacheFile : DEFAULT_CONFIG.incremental.cacheFile,
       scannerTimeoutMs: typeof incremental.scannerTimeoutMs === 'number' ? incremental.scannerTimeoutMs : DEFAULT_CONFIG.incremental.scannerTimeoutMs
     },
+    compliance: {
+      enabled: typeof compliance.enabled === 'boolean' ? compliance.enabled : DEFAULT_CONFIG.compliance.enabled,
+      tenant: typeof compliance.tenant === 'string' ? compliance.tenant : DEFAULT_CONFIG.compliance.tenant,
+      project: typeof compliance.project === 'string' ? compliance.project : DEFAULT_CONFIG.compliance.project,
+      storeDirectory: typeof compliance.storeDirectory === 'string' ? compliance.storeDirectory : DEFAULT_CONFIG.compliance.storeDirectory,
+      endpoint: typeof compliance.endpoint === 'string' ? compliance.endpoint : DEFAULT_CONFIG.compliance.endpoint,
+      tokenEnv: typeof compliance.tokenEnv === 'string' ? compliance.tokenEnv : DEFAULT_CONFIG.compliance.tokenEnv,
+      timeoutMs: typeof compliance.timeoutMs === 'number' && compliance.timeoutMs >= 0 ? compliance.timeoutMs : DEFAULT_CONFIG.compliance.timeoutMs,
+      listenHost: typeof compliance.listenHost === 'string' ? compliance.listenHost : DEFAULT_CONFIG.compliance.listenHost,
+      listenPort: typeof compliance.listenPort === 'number' && compliance.listenPort >= 0 && compliance.listenPort <= 65535 ? compliance.listenPort : DEFAULT_CONFIG.compliance.listenPort,
+      apiTokenEnv: typeof compliance.apiTokenEnv === 'string' ? compliance.apiTokenEnv : DEFAULT_CONFIG.compliance.apiTokenEnv
+    },
     policy: {
       failOn: (failOn as string[]).map((v) => v as Severity),
       warnOn: (warnOn as string[]).map((v) => v as Severity),
@@ -212,6 +225,10 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
     next.incremental.scannerTimeoutMs = value;
   }
   if (env.SENTRYCODE_DISABLE_CI_ANNOTATIONS === 'true') next.ci.annotations = false;
+  if (env.SENTRYCODE_COMPLIANCE_TENANT !== undefined) next.compliance.tenant = env.SENTRYCODE_COMPLIANCE_TENANT;
+  if (env.SENTRYCODE_COMPLIANCE_PROJECT !== undefined) next.compliance.project = env.SENTRYCODE_COMPLIANCE_PROJECT;
+  if (env.SENTRYCODE_COMPLIANCE_ENDPOINT !== undefined) next.compliance.endpoint = env.SENTRYCODE_COMPLIANCE_ENDPOINT;
+  if (env.SENTRYCODE_DISABLE_COMPLIANCE_PUBLISH === 'true') next.compliance.enabled = false;
   return next;
 }
 

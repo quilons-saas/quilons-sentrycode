@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "quilons.sentrycode",
+  "displayName": "SentryCode",
+  "parentProduct": "QUILONS Compliance",
+  "standalone": true,
+  "healthCommand": "sentrycode compliance health",
+  "readinessCommand": "sentrycode compliance ready",
+  "manifestCommand": "sentrycode compliance manifest --format json",
+  "requiredCapabilities": [],
+  "provides": ["sentrycode.scan", "sentrycode.findings", "sentrycode.evidence", "sentrycode.policy", "sentrycode.waivers", "sentrycode.health"]
+}

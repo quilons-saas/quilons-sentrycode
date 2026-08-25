@@ -319,6 +319,18 @@ export interface SentryCodeConfig {
     cacheFile: string;
     scannerTimeoutMs: number;
   };
+  compliance: {
+    enabled: boolean;
+    tenant: string;
+    project: string;
+    storeDirectory: string;
+    endpoint: string;
+    tokenEnv: string;
+    timeoutMs: number;
+    listenHost: string;
+    listenPort: number;
+    apiTokenEnv: string;
+  };
   waivers: {
     file: string;
     requireApproval: boolean;

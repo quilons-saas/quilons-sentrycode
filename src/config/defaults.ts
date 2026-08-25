@@ -59,6 +59,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   ci: { enabled: true, provider: 'auto', annotations: true },
   monorepo: { enabled: true, serviceRoots: [], discoverWorkspaces: true },
   incremental: { enabled: true, baseRef: '', headRef: 'HEAD', cacheFile: '.sentrycode/cache/incremental.json', scannerTimeoutMs: 120000 },
+  compliance: { enabled: false, tenant: '', project: '', storeDirectory: '.sentrycode/compliance', endpoint: '', tokenEnv: 'SENTRYCODE_COMPLIANCE_TOKEN', timeoutMs: 15000, listenHost: '127.0.0.1', listenPort: 7786, apiTokenEnv: 'SENTRYCODE_PLUGIN_API_TOKEN' },
   policy: {
     failOn: ['high', 'critical'],
     warnOn: ['medium'],

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "quilons.sentrycode",
+  "product": "QUILONS SentryCode",
+  "apiVersion": "1.0.0",
+  "standalone": true,
+  "capabilities": [
+    "sentrycode.scan",
+    "sentrycode.findings",
+    "sentrycode.evidence",
+    "sentrycode.policy",
+    "sentrycode.waivers",
+    "sentrycode.health"
+  ],
+  "integrationRule": "Governed/versioned capability APIs and events only; no cross-module database access"
+}
