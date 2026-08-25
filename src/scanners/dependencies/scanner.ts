@@ -31,7 +31,7 @@ export class DependencyScanner implements ScannerPlugin {
   async scan(context: ScannerContext): Promise<ScannerResult> {
     const started = performance.now();
     const detectedAt = context.now().toISOString();
-    if (!context.config.dependencies.enabled) return { scanner: this.id, findings: [], evidence: [], durationMs: Math.round(performance.now() - started) };
+    if (!context.config.dependencies.enabled) return { scanner: this.id, findings: [], evidence: [], durationMs: Math.round(performance.now() - started), status: 'skipped', error: 'scanner disabled by configuration' };
     const snapshot = await discoverDependencies(context.repository.root, detectedAt);
     const components = snapshot.components.filter((item) => context.config.dependencies.includeDev || !item.dev);
     const findings: Finding[] = [];

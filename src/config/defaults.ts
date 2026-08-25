@@ -56,7 +56,25 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   policy: {
     failOn: ['high', 'critical'],
     warnOn: ['medium'],
-    requiredScanners: ['secrets', 'dependencies']
+    requiredScanners: ['secrets', 'dependencies'],
+    directory: '.sentrycode/policies',
+    scannerFailureModes: {
+      secrets: 'fail',
+      dependencies: 'fail'
+    },
+    context: {},
+    opa: {
+      enabled: false,
+      binary: 'opa',
+      query: 'data.sentrycode.release.decision',
+      policyFiles: []
+    }
+  },
+  waivers: {
+    file: '.sentrycode/waivers.json',
+    requireApproval: false,
+    requireTicket: false,
+    maxDurationDays: 90
   },
   waiversFile: '.sentrycode/waivers.json'
 };

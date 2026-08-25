@@ -63,7 +63,7 @@ export class SecretsScanner implements ScannerPlugin {
     const detectedAt = context.now().toISOString();
     const findings: Finding[] = [];
     if (!context.config.secrets.enabled) {
-      return { scanner: this.id, findings, evidence: [], durationMs: Math.round(performance.now() - started) };
+      return { scanner: this.id, findings, evidence: [], durationMs: Math.round(performance.now() - started), status: 'skipped', error: 'scanner disabled by configuration' };
     }
 
     const custom: SecretPattern[] = context.config.secrets.customPatterns.map((pattern) => ({

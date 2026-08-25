@@ -11,15 +11,47 @@ import { dependencySnapshotAtRef, diffDependencies } from '../dependencies/diff.
 import { cyclonedxSbom, spdxSbom } from '../sbom/generate.js';
 import { renderConsole } from '../reporting/console.js';
 import { renderJson, writeJsonReport } from '../reporting/json.js';
+import { loadPolicyDocuments } from '../policy/documents.js';
+import { resolvePolicy } from '../policy/resolve.js';
+import { buildReleaseDecision } from '../policy/release.js';
 import { EXIT_CODES } from './exit-codes.js';
+import type { PolicyContext, ScanReport } from '../core/types.js';
 
-interface ScanOptions { command: 'scan' | 'check'; path: string; config?: string; format: 'console' | 'json'; output?: string; }
-interface SbomOptions { command: 'sbom'; path: string; config?: string; format: 'cyclonedx' | 'spdx'; output?: string; }
-interface DiffOptions { command: 'dependencies-diff'; path: string; base: string; head: string; format: 'console' | 'json'; output?: string; }
-type CliOptions = ScanOptions | SbomOptions | DiffOptions;
+interface CommonOptions { path: string; config?: string; output?: string; service?: string; }
+interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json'; }
+interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
+interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
+interface PolicyOptions extends CommonOptions { command: 'policy-validate' | 'policy-evaluate'; format: 'console' | 'json'; }
+interface ReleaseOptions extends CommonOptions { command: 'release-check'; format: 'console' | 'json'; }
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions;
 
 function usage(): string {
-  return `QUILONS SentryCode\n\nUsage:\n  sentrycode scan [path] [--config FILE] [--format console|json] [--output FILE]\n  sentrycode check [path] [--config FILE] [--format console|json] [--output FILE]\n  sentrycode sbom [path] [--config FILE] [--format cyclonedx|spdx] [--output FILE]\n  sentrycode dependencies diff [path] --base REF [--head REF] [--format console|json] [--output FILE]\n\nCommands:\n  scan               Scan repository and evaluate policy.\n  check              Alias of scan for CI/policy-gate use.\n  sbom               Generate CycloneDX 1.5 or SPDX 2.3 SBOM.\n  dependencies diff  Compare dependency state between Git refs.\n\nExit codes:\n  0 PASS/WARN/success\n  1 policy failure\n  2 scan/runtime failure\n  3 configuration/usage failure\n`;
+  return `QUILONS SentryCode
+
+Usage:
+  sentrycode scan [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+  sentrycode check [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+  sentrycode sbom [path] [--config FILE] [--format cyclonedx|spdx] [--output FILE]
+  sentrycode dependencies diff [path] --base REF [--head REF] [--format console|json] [--output FILE]
+  sentrycode policy validate [path] [--config FILE] [--service NAME] [--format console|json]
+  sentrycode policy evaluate [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+  sentrycode release check [path] [--config FILE] [--service NAME] [--format console|json] [--output FILE]
+
+Commands:
+  scan               Scan repository and evaluate policy.
+  check              Alias of scan for CI/policy-gate use.
+  sbom               Generate CycloneDX 1.5 or SPDX 2.3 SBOM.
+  dependencies diff  Compare dependency state between Git refs.
+  policy validate    Validate and resolve hierarchical policy documents.
+  policy evaluate    Run scanners and show the effective policy decision.
+  release check      Enforce the release gate and emit release.gate evidence.
+
+Exit codes:
+  0 PASS/WARN/success
+  1 policy/release failure
+  2 scan/runtime failure
+  3 configuration/usage failure
+`;
 }
 
 function requireValue(argv: string[], index: number, option: string): string {
@@ -33,12 +65,16 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let offset = 1;
   let command: CliOptions['command'];
   if (argv[0] === 'dependencies' && argv[1] === 'diff') { command = 'dependencies-diff'; offset = 2; }
+  else if (argv[0] === 'policy' && argv[1] === 'validate') { command = 'policy-validate'; offset = 2; }
+  else if (argv[0] === 'policy' && argv[1] === 'evaluate') { command = 'policy-evaluate'; offset = 2; }
+  else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
   else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
   let path = process.cwd();
   let config: string | undefined;
   let output: string | undefined;
+  let service: string | undefined;
   let base: string | undefined;
   let head = 'HEAD';
   let positionalUsed = false;
@@ -49,6 +85,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     const arg = argv[i]!;
     if (arg === '--config') { config = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--output') { output = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--service') { service = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--base') { base = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--head') { head = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--format') {
@@ -65,12 +102,16 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else throw new Error(`Unexpected argument: ${arg}`);
   }
 
+  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}) };
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
-    return { command, path, base, head, format: scanFormat, ...(output ? { output } : {}) };
+    return { command, ...common, base, head, format: scanFormat };
   }
-  if (command === 'sbom') return { command, path, format: sbomFormat, ...(config ? { config } : {}), ...(output ? { output } : {}) };
-  return { command, path, format: scanFormat, ...(config ? { config } : {}), ...(output ? { output } : {}) };
+  if (command === 'sbom') return { command, ...common, format: sbomFormat };
+  if (command === 'policy-validate' || command === 'policy-evaluate' || command === 'release-check') {
+    return { command, ...common, format: scanFormat };
+  }
+  return { command, ...common, format: scanFormat };
 }
 
 async function writeOutput(root: string, output: string, content: string): Promise<string> {
@@ -89,6 +130,41 @@ function renderDependencyDiff(changes: ReturnType<typeof diffDependencies>): str
     if (change.kind === 'removed') return `REMOVED ${change.ecosystem}:${change.name}${before}`;
     return `${change.kind.toUpperCase()} ${change.ecosystem}:${change.name}${before} -> ${after}`;
   }).join('\n')}\n`;
+}
+
+function policyContext(repository: string, config: Awaited<ReturnType<typeof loadConfig>>, service?: string): PolicyContext {
+  return {
+    repository,
+    ...(config.policy.context.tenant ? { tenant: config.policy.context.tenant } : {}),
+    ...(config.policy.context.project ? { project: config.policy.context.project } : {}),
+    ...((service ?? config.policy.context.service) ? { service: service ?? config.policy.context.service } : {})
+  };
+}
+
+function renderEffectivePolicy(policy: ReturnType<typeof resolvePolicy>): string {
+  const sources = policy.sourceDocuments.length
+    ? policy.sourceDocuments.map((item) => `${item.level}: ${item.id}@${item.version} (${item.path})`).join('\n')
+    : '(configuration baseline only)';
+  return `SentryCode policy valid
+Fingerprint: ${policy.fingerprint}
+Sources:
+${sources}
+Fail on: ${policy.failOn.join(', ') || '(none)'}
+Warn on: ${policy.warnOn.join(', ') || '(none)'}
+Required scanners: ${policy.requiredScanners.join(', ') || '(none)'}
+Locked fields: ${policy.lockedFields.join(', ') || '(none)'}
+`;
+}
+
+function renderPolicyEvaluation(report: ScanReport): string {
+  const base = renderConsole(report);
+  const policy = report.policy.effectivePolicy;
+  if (!policy) return `${base}\n`;
+  return `${base}
+
+Policy fingerprint: ${policy.fingerprint}
+Policy sources: ${policy.sourceDocuments.map((item) => `${item.id}@${item.version}`).join(', ') || 'configuration baseline'}
+`;
 }
 
 async function main(): Promise<number> {
@@ -125,10 +201,52 @@ async function main(): Promise<number> {
       return EXIT_CODES.PASS;
     }
 
-    const report = await runScan({ repository, config, scanners: [new SecretsScanner(), new DependencyScanner()] });
-    const rendered = options.format === 'json' ? renderJson(report) : `${renderConsole(report)}\n`;
+    if (options.command === 'policy-validate') {
+      try {
+        const documents = await loadPolicyDocuments(repository.root, config.policy.directory, policyContext(repository.repository, config, options.service), new Date());
+        const effective = resolvePolicy(config, documents);
+        const rendered = options.format === 'json' ? `${JSON.stringify(effective, null, 2)}\n` : renderEffectivePolicy(effective);
+        if (options.output) console.log(`Effective policy written: ${await writeOutput(repository.root, options.output, rendered)}`);
+        else process.stdout.write(rendered);
+        return EXIT_CODES.PASS;
+      } catch (error) {
+        console.error(`Configuration error: ${(error as Error).message}`);
+        return EXIT_CODES.CONFIGURATION_FAILURE;
+      }
+    }
+
+    const report = await runScan({
+      repository,
+      config,
+      scanners: [new SecretsScanner(), new DependencyScanner()],
+      ...(options.service ? { service: options.service } : {})
+    });
+
+    if (options.command === 'release-check') {
+      const release = buildReleaseDecision(report);
+      report.evidence.push(release.evidence);
+      report.policy.audit.push({
+        event: 'release.decision',
+        at: release.decision.evaluatedAt,
+        policyFingerprint: release.decision.policyFingerprint,
+        decision: release.decision.decision,
+        reason: release.decision.reasons.join('; ')
+      });
+      const payload = { release: release.decision, report };
+      const rendered = options.format === 'json'
+        ? `${JSON.stringify(payload, null, 2)}\n`
+        : `${renderPolicyEvaluation(report)}\nRelease gate: ${release.decision.decision}\nRelease ID: ${release.decision.releaseId}\n`;
+      if (options.output) console.log(`Release report written: ${await writeOutput(repository.root, options.output, rendered)}`);
+      else process.stdout.write(rendered);
+      return release.decision.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
+    }
+
+    const rendered = options.format === 'json' ? renderJson(report) : (options.command === 'policy-evaluate' ? renderPolicyEvaluation(report) : `${renderConsole(report)}\n`);
     if (options.output) {
-      if (options.format !== 'json') { console.error('--output currently requires --format json'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      if (options.format !== 'json') {
+        console.error('--output currently requires --format json for scan/check/policy evaluate');
+        return EXIT_CODES.CONFIGURATION_FAILURE;
+      }
       const written = await writeJsonReport(repository.root, options.output, report);
       console.log(`SentryCode report written: ${written}`);
     } else process.stdout.write(rendered);

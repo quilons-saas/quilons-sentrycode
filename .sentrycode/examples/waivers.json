@@ -4,7 +4,11 @@
     "ruleId": "generic-secret-assignment",
     "path": "test/fixtures/example.txt",
     "reason": "False-positive fixture for a controlled test",
-    "author": "security@example.invalid",
-    "expiresAt": "2099-01-01T00:00:00.000Z"
+    "ticket": "SEC-1234",
+    "author": "developer@example.invalid",
+    "approver": "security@example.invalid",
+    "createdAt": "2026-08-25T00:00:00.000Z",
+    "approvedAt": "2026-08-25T01:00:00.000Z",
+    "expiresAt": "2026-09-24T00:00:00.000Z"
   }
 ]

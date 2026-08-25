@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { DEFAULT_CONFIG } from './defaults.js';
-import type { SentryCodeConfig, Severity } from '../core/types.js';
+import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/types.js';
 
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
+const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -27,6 +28,20 @@ function stringRecord(value: unknown, fallback: Record<string, string>, label: s
   return result;
 }
 
+function failureModeRecord(value: unknown, fallback: Record<string, ScannerFailureMode>, label: string): Record<string, ScannerFailureMode> {
+  const raw = stringRecord(value, fallback, label);
+  for (const [key, mode] of Object.entries(raw)) {
+    if (!VALID_FAILURE_MODES.has(mode as ScannerFailureMode)) throw new Error(`${label}.${key} must be fail, warn, or ignore`);
+  }
+  return raw as Record<string, ScannerFailureMode>;
+}
+
+function optionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} must be a non-empty string`);
+  return value;
+}
+
 function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   if (raw.schemaVersion !== undefined && raw.schemaVersion !== 1) throw new Error('Unsupported config schemaVersion; expected 1');
   const scan = raw.scan === undefined ? {} : asObject(raw.scan, 'scan');
@@ -36,6 +51,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const vulnerabilities = raw.vulnerabilities === undefined ? {} : asObject(raw.vulnerabilities, 'vulnerabilities');
   const sbom = raw.sbom === undefined ? {} : asObject(raw.sbom, 'sbom');
   const policy = raw.policy === undefined ? {} : asObject(raw.policy, 'policy');
+  const policyContext = policy.context === undefined ? {} : asObject(policy.context, 'policy.context');
+  const opa = policy.opa === undefined ? {} : asObject(policy.opa, 'policy.opa');
+  const waivers = raw.waivers === undefined ? {} : asObject(raw.waivers, 'waivers');
 
   const failOn = policy.failOn ?? DEFAULT_CONFIG.policy.failOn;
   const warnOn = policy.warnOn ?? DEFAULT_CONFIG.policy.warnOn;
@@ -51,6 +69,14 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   if (!['allow', 'warn', 'fail'].includes(String(unknownLicense))) throw new Error('licenses.unknown must be allow, warn, or fail');
   const sbomFormat = sbom.defaultFormat ?? DEFAULT_CONFIG.sbom.defaultFormat;
   if (sbomFormat !== 'cyclonedx' && sbomFormat !== 'spdx') throw new Error('sbom.defaultFormat must be cyclonedx or spdx');
+
+  const legacyWaiverFile = typeof raw.waiversFile === 'string' ? raw.waiversFile : undefined;
+  const waiverFile = typeof waivers.file === 'string' ? waivers.file : legacyWaiverFile ?? DEFAULT_CONFIG.waivers.file;
+  const maxDurationDays = typeof waivers.maxDurationDays === 'number' ? waivers.maxDurationDays : DEFAULT_CONFIG.waivers.maxDurationDays;
+  if (!Number.isFinite(maxDurationDays) || maxDurationDays <= 0) throw new Error('waivers.maxDurationDays must be a positive number');
+  const contextTenant = optionalString(policyContext.tenant, 'policy.context.tenant');
+  const contextProject = optionalString(policyContext.project, 'policy.context.project');
+  const contextService = optionalString(policyContext.service, 'policy.context.service');
 
   return {
     schemaVersion: 1,
@@ -97,9 +123,28 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
     policy: {
       failOn: (failOn as string[]).map((v) => v as Severity),
       warnOn: (warnOn as string[]).map((v) => v as Severity),
-      requiredScanners: stringArray(policy.requiredScanners, DEFAULT_CONFIG.policy.requiredScanners, 'policy.requiredScanners')
+      requiredScanners: stringArray(policy.requiredScanners, DEFAULT_CONFIG.policy.requiredScanners, 'policy.requiredScanners'),
+      directory: typeof policy.directory === 'string' ? policy.directory : DEFAULT_CONFIG.policy.directory,
+      scannerFailureModes: failureModeRecord(policy.scannerFailureModes, DEFAULT_CONFIG.policy.scannerFailureModes, 'policy.scannerFailureModes'),
+      context: {
+        ...(contextTenant ? { tenant: contextTenant } : {}),
+        ...(contextProject ? { project: contextProject } : {}),
+        ...(contextService ? { service: contextService } : {})
+      },
+      opa: {
+        enabled: typeof opa.enabled === 'boolean' ? opa.enabled : DEFAULT_CONFIG.policy.opa.enabled,
+        binary: typeof opa.binary === 'string' ? opa.binary : DEFAULT_CONFIG.policy.opa.binary,
+        query: typeof opa.query === 'string' ? opa.query : DEFAULT_CONFIG.policy.opa.query,
+        policyFiles: stringArray(opa.policyFiles, DEFAULT_CONFIG.policy.opa.policyFiles, 'policy.opa.policyFiles')
+      }
     },
-    waiversFile: typeof raw.waiversFile === 'string' ? raw.waiversFile : DEFAULT_CONFIG.waiversFile
+    waivers: {
+      file: waiverFile,
+      requireApproval: typeof waivers.requireApproval === 'boolean' ? waivers.requireApproval : DEFAULT_CONFIG.waivers.requireApproval,
+      requireTicket: typeof waivers.requireTicket === 'boolean' ? waivers.requireTicket : DEFAULT_CONFIG.waivers.requireTicket,
+      maxDurationDays
+    },
+    waiversFile: waiverFile
   };
 }
 

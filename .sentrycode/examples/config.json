@@ -1,8 +1,18 @@
 {
   "schemaVersion": 1,
   "scan": {
-    "include": ["**/*"],
-    "exclude": [".git/**", "node_modules/**", "dist/**", "build/**", "coverage/**", "**/*.zip", "**/*.pdf"],
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      ".git/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      "coverage/**",
+      "**/*.zip",
+      "**/*.pdf"
+    ],
     "maxFileBytes": 2000000
   },
   "secrets": {
@@ -14,7 +24,9 @@
   "dependencies": {
     "enabled": true,
     "includeDev": true,
-    "allowedRegistries": ["registry.npmjs.org"],
+    "allowedRegistries": [
+      "registry.npmjs.org"
+    ],
     "deniedPackages": [],
     "allowedPackages": [],
     "versionRestrictions": {}
@@ -22,8 +34,18 @@
   "licenses": {
     "enabled": true,
     "allowed": [],
-    "denied": ["AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later", "SSPL-1.0"],
-    "reviewRequired": ["GPL-2.0", "GPL-3.0", "LGPL-2.1", "LGPL-3.0"],
+    "denied": [
+      "AGPL-3.0",
+      "AGPL-3.0-only",
+      "AGPL-3.0-or-later",
+      "SSPL-1.0"
+    ],
+    "reviewRequired": [
+      "GPL-2.0",
+      "GPL-3.0",
+      "LGPL-2.1",
+      "LGPL-3.0"
+    ],
     "unknown": "warn",
     "overrides": {}
   },
@@ -32,11 +54,43 @@
     "databaseFile": ".sentrycode/vulnerability-db.json",
     "failOnKnownExploited": true
   },
-  "sbom": { "defaultFormat": "cyclonedx" },
-  "policy": {
-    "failOn": ["high", "critical"],
-    "warnOn": ["medium"],
-    "requiredScanners": ["secrets", "dependencies"]
+  "sbom": {
+    "defaultFormat": "cyclonedx"
   },
-  "waiversFile": ".sentrycode/waivers.json"
+  "policy": {
+    "failOn": [
+      "high",
+      "critical"
+    ],
+    "warnOn": [
+      "medium"
+    ],
+    "requiredScanners": [
+      "secrets",
+      "dependencies"
+    ],
+    "directory": ".sentrycode/policies",
+    "scannerFailureModes": {
+      "secrets": "fail",
+      "dependencies": "fail"
+    },
+    "context": {
+      "tenant": "example-tenant",
+      "project": "example-project"
+    },
+    "opa": {
+      "enabled": false,
+      "binary": "opa",
+      "query": "data.sentrycode.release.decision",
+      "policyFiles": [
+        ".sentrycode/release.rego"
+      ]
+    }
+  },
+  "waivers": {
+    "file": ".sentrycode/waivers.json",
+    "requireApproval": true,
+    "requireTicket": true,
+    "maxDurationDays": 90
+  }
 }

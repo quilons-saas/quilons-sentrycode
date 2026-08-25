@@ -2,6 +2,10 @@ export const SCHEMA_VERSION = '1.0.0' as const;
 
 export type Severity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 export type Decision = 'PASS' | 'WARN' | 'FAIL';
+export type ScannerExecutionStatus = 'success' | 'failed' | 'skipped';
+export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
+export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
+export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
 
 export interface RepositoryContext {
   root: string;
@@ -51,6 +55,8 @@ export interface ScannerResult {
   findings: Finding[];
   evidence: EvidenceRecord[];
   durationMs: number;
+  status?: ScannerExecutionStatus;
+  error?: string;
 }
 
 export interface ScannerContext {
@@ -70,10 +76,16 @@ export interface Waiver {
   fingerprint?: string;
   ruleId?: string;
   path?: string;
+  scanner?: string;
+  repository?: string;
+  service?: string;
   reason: string;
+  ticket?: string;
+  createdAt?: string;
   expiresAt: string;
   author?: string;
   approver?: string;
+  approvedAt?: string;
 }
 
 export interface DependencyComponent {
@@ -112,6 +124,66 @@ export interface VulnerabilityAdvisory {
   source?: string;
   url?: string;
   knownExploited?: boolean;
+}
+
+export interface PolicyScope {
+  tenant?: string;
+  project?: string;
+  repository?: string;
+  service?: string;
+}
+
+export interface PolicyEnforcement {
+  failOn?: Severity[];
+  warnOn?: Severity[];
+  requiredScanners?: string[];
+  scannerFailureModes?: Record<string, ScannerFailureMode>;
+}
+
+export interface PolicyDocument {
+  schemaVersion: 1;
+  id: string;
+  version: string;
+  level: PolicyLevel;
+  scope?: PolicyScope;
+  description?: string;
+  effectiveFrom?: string;
+  effectiveUntil?: string;
+  enforcement?: PolicyEnforcement;
+  lock?: PolicyField[];
+}
+
+export interface EffectivePolicy {
+  sourceDocuments: Array<{
+    id: string;
+    version: string;
+    level: PolicyLevel;
+    path: string;
+  }>;
+  failOn: Severity[];
+  warnOn: Severity[];
+  requiredScanners: string[];
+  scannerFailureModes: Record<string, ScannerFailureMode>;
+  lockedFields: PolicyField[];
+  fingerprint: string;
+}
+
+export interface PolicyContext {
+  tenant?: string;
+  project?: string;
+  repository: string;
+  service?: string;
+}
+
+export interface PolicyAuditRecord {
+  event: 'policy.resolved' | 'waiver.applied' | 'waiver.rejected' | 'release.decision';
+  at: string;
+  policyFingerprint?: string;
+  policySources?: string[];
+  waiverId?: string;
+  findingId?: string;
+  decision?: Decision;
+  reason?: string;
 }
 
 export interface SentryCodeConfig {
@@ -160,7 +232,27 @@ export interface SentryCodeConfig {
     failOn: Severity[];
     warnOn: Severity[];
     requiredScanners: string[];
+    directory: string;
+    scannerFailureModes: Record<string, ScannerFailureMode>;
+    context: {
+      tenant?: string;
+      project?: string;
+      service?: string;
+    };
+    opa: {
+      enabled: boolean;
+      binary: string;
+      query: string;
+      policyFiles: string[];
+    };
   };
+  waivers: {
+    file: string;
+    requireApproval: boolean;
+    requireTicket: boolean;
+    maxDurationDays: number;
+  };
+  /** @deprecated Use waivers.file. Retained for config compatibility. */
   waiversFile: string;
 }
 
@@ -176,6 +268,8 @@ export interface PolicyResult {
   counts: Record<Severity, number>;
   waivedCount: number;
   reasons: string[];
+  effectivePolicy?: EffectivePolicy;
+  audit: PolicyAuditRecord[];
 }
 
 export interface ScanReport {
@@ -187,4 +281,16 @@ export interface ScanReport {
   scanners: ScannerResult[];
   policy: PolicyResult;
   evidence: EvidenceRecord[];
+}
+
+export interface ReleaseDecision {
+  schemaVersion: typeof SCHEMA_VERSION;
+  releaseId: string;
+  evaluatedAt: string;
+  repository: RepositoryContext;
+  decision: Decision;
+  policyFingerprint: string;
+  reasons: string[];
+  evidenceIds: string[];
+  scanRunId: string;
 }

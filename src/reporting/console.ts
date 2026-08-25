@@ -7,6 +7,10 @@ export function renderConsole(report: ScanReport): string {
   lines.push(`Commit: ${report.repository.commitSha ?? 'unavailable'}${report.repository.isDirty ? ' (working tree dirty)' : ''}`);
   lines.push('');
 
+  const failedScanners = report.scanners.filter((item) => (item.status ?? 'success') === 'failed');
+  for (const scanner of failedScanners) lines.push(`[SCANNER FAILED] ${scanner.scanner}: ${scanner.error ?? 'unknown error'}`);
+  if (failedScanners.length) lines.push('');
+
   const active = report.policy.findings.filter((item) => !item.waived);
   if (!active.length) {
     lines.push('No active findings.');
