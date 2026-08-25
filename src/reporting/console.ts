@@ -5,6 +5,11 @@ export function renderConsole(report: ScanReport): string {
   lines.push(`SentryCode ${report.policy.decision}`);
   lines.push(`Repository: ${report.repository.repository}`);
   lines.push(`Commit: ${report.repository.commitSha ?? 'unavailable'}${report.repository.isDirty ? ' (working tree dirty)' : ''}`);
+  if (report.execution) {
+    lines.push(`Scan mode: ${report.execution.mode}${report.execution.baseRef ? ` (${report.execution.baseRef}...${report.execution.headRef ?? 'HEAD'})` : ''}`);
+    if (report.execution.mode === 'incremental') lines.push(`Changed files: ${report.execution.changedFiles.length}`);
+    if (report.execution.ci) lines.push(`CI: ${report.execution.ci.provider}${report.execution.ci.pullRequest ? ' (pull request)' : ''}`);
+  }
   lines.push('');
 
   const failedScanners = report.scanners.filter((item) => (item.status ?? 'success') === 'failed');

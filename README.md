@@ -155,3 +155,38 @@ sentrycode provenance verify . --attestation provenance.json --public-key public
 ```
 
 The built-in SAST rules are intentionally a selected baseline, not a claim to replace every specialist static-analysis engine. Future scanner integrations plug into the same normalized finding/evidence boundary.
+
+## Slice 5: CI/CD, monorepos and incremental execution
+
+SentryCode now detects GitHub Actions, GitLab CI, Azure DevOps, Jenkins and generic CI environments without making the core engine provider-specific.
+
+Key behavior:
+
+- `check` and `scan` automatically use incremental Git diffing when a trustworthy base ref is available.
+- `--base REF` / `--head REF` explicitly control the comparison range.
+- `--full` forces a complete scan.
+- Secrets and native SAST restrict file reads to changed files during incremental runs.
+- Dependency/license/vulnerability, Git assurance and provenance checks continue to evaluate repository-level state rather than reusing cached compliance decisions.
+- Successful clean-repository runs persist only the last successful commit in `.sentrycode/cache/incremental.json`; findings and PASS/FAIL decisions are never replayed from cache.
+- Scanner plugins execute concurrently with deterministic result ordering and configurable per-scanner timeout.
+- `sentrycode services` discovers configured service roots and npm workspaces.
+- `--service NAME` scopes changed-file scanning and policy context to a service.
+- GitHub and Azure DevOps receive native log annotations; GitLab/Jenkins/generic CI receive stable SentryCode annotation lines.
+- Environment overrides are supported for CI provider, incremental refs and scanner timeout.
+
+Configuration precedence for supported runtime overrides is:
+
+`CLI options > SENTRYCODE_* environment > repository config > built-in defaults`
+
+Useful examples:
+
+```bash
+sentrycode check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
+sentrycode check . --base origin/main --head HEAD
+sentrycode check . --full
+sentrycode services . --format json
+sentrycode check . --service api --base origin/main
+```
+
+Reference CI templates are in `integrations/`.
+

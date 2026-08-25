@@ -1,0 +1,12 @@
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+  - script: npm ci
+    displayName: Install
+  - script: npm run build
+    displayName: Build SentryCode
+  - script: node dist/cli/main.js check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
+    displayName: SentryCode

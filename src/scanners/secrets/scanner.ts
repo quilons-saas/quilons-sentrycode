@@ -74,7 +74,7 @@ export class SecretsScanner implements ScannerPlugin {
       description: pattern.description ?? `Repository content matched custom secret rule ${pattern.id}.`
     }));
     const patterns = [...BUILTIN_SECRET_PATTERNS, ...custom];
-    const files = await discoverFiles(context.repository.root, context.config);
+    const files = await discoverFiles(context.repository.root, context.config, context.execution?.mode === 'incremental' ? context.execution.changedFiles : undefined);
 
     for (const absolute of files) {
       let content: string;

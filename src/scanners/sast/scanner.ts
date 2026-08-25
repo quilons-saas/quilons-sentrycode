@@ -28,7 +28,7 @@ export class SastScanner implements ScannerPlugin {
   async scan(context: ScannerContext): Promise<ScannerResult> {
     const started=performance.now(); const detectedAt=context.now().toISOString();
     if (!context.config.sast.enabled) return { scanner:this.id, findings:[], evidence:[], durationMs:Math.round(performance.now()-started), status:'skipped', error:'scanner disabled by configuration' };
-    const findings: Finding[]=[]; const files=await discoverFiles(context.repository.root, context.config); let scanned=0;
+    const findings: Finding[]=[]; const files=await discoverFiles(context.repository.root, context.config, context.execution?.mode === 'incremental' ? context.execution.changedFiles : undefined); let scanned=0;
     for (const absolute of files) {
       const path=relative(context.repository.root,absolute).replace(/\\/g,'/'); const lang=language(path);
       if (!lang || !context.config.sast.languages.includes(lang)) continue;

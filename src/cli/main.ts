@@ -21,9 +21,14 @@ import { loadPolicyDocuments } from '../policy/documents.js';
 import { resolvePolicy } from '../policy/resolve.js';
 import { buildReleaseDecision } from '../policy/release.js';
 import { EXIT_CODES } from './exit-codes.js';
+import { detectCi } from '../ci/context.js';
+import { renderCiAnnotations } from '../ci/annotations.js';
+import { buildIncrementalPlan } from '../incremental/plan.js';
+import { writeIncrementalCache } from '../incremental/cache.js';
+import { discoverServices } from '../monorepo/discover.js';
 import type { PolicyContext, ScanReport } from '../core/types.js';
 
-interface CommonOptions { path: string; config?: string; output?: string; service?: string; }
+interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
 interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
 interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
@@ -31,15 +36,16 @@ interface PolicyOptions extends CommonOptions { command: 'policy-validate' | 'po
 interface ReleaseOptions extends CommonOptions { command: 'release-check'; format: 'console' | 'json' | 'sarif'; }
 interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'; artifact: string[]; key?: string; }
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
+interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
 
 Usage:
-  sentrycode scan [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
-  sentrycode check [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
+  sentrycode scan [path] [--config FILE] [--service NAME] [--base REF] [--head REF] [--full] [--ci] [--format console|json|sarif] [--output FILE]
+  sentrycode check [path] [--config FILE] [--service NAME] [--base REF] [--head REF] [--full] [--ci] [--format console|json|sarif] [--output FILE]
   sentrycode sbom [path] [--config FILE] [--format cyclonedx|spdx] [--output FILE]
   sentrycode dependencies diff [path] --base REF [--head REF] [--format console|json] [--output FILE]
   sentrycode policy validate [path] [--config FILE] [--service NAME] [--format console|json]
@@ -47,6 +53,7 @@ Usage:
   sentrycode release check [path] [--config FILE] [--service NAME] [--format console|json|sarif] [--output FILE]
   sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
   sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
+  sentrycode services [path] [--format console|json]
 
 Commands:
   scan               Scan repository and evaluate policy.
@@ -58,6 +65,7 @@ Commands:
   release check      Enforce the release gate and emit release.gate evidence.
   provenance attest  Generate in-toto/SLSA-shaped provenance and optional signature.
   provenance verify  Verify a signed provenance attestation.
+  services           Discover monorepo services/packages.
 
 Exit codes:
   0 PASS/WARN/success
@@ -83,7 +91,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'attest') { command = 'provenance-attest'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'verify') { command = 'provenance-verify'; offset = 2; }
-  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom') command = argv[0];
+  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
   let path = process.cwd();
@@ -99,6 +107,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let attestation: string | undefined;
   let publicKey: string | undefined;
   let sbomFormat: 'cyclonedx' | 'spdx' = 'cyclonedx';
+  let full = false;
+  let ci = false;
 
   for (let i = offset; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -107,6 +117,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--service') { service = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--base') { base = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--head') { head = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--full') { full = true; }
+    else if (arg === '--ci') { ci = true; }
     else if (arg === '--artifact') { artifacts.push(requireValue(argv, i, arg)); i += 1; }
     else if (arg === '--key') { key = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--attestation') { attestation = requireValue(argv, i, arg); i += 1; }
@@ -125,13 +137,17 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else throw new Error(`Unexpected argument: ${arg}`);
   }
 
-  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}) };
+  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}) };
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
     if (scanFormat === 'sarif') throw new Error('dependencies diff does not support SARIF format');
     return { command, ...common, base, head, format: scanFormat };
   }
   if (command === 'sbom') return { command, ...common, format: sbomFormat };
+  if (command === 'services') {
+    if (scanFormat === 'sarif') throw new Error('services does not support SARIF format');
+    return { command, ...common, format: scanFormat };
+  }
   if (command === 'provenance-attest') { if (!artifacts.length) throw new Error('provenance attest requires at least one --artifact FILE'); return { command, ...common, artifact: artifacts, ...(key ? { key } : {}) }; }
   if (command === 'provenance-verify') { if (!attestation || !publicKey) throw new Error('provenance verify requires --attestation FILE and --public-key FILE'); return { command, ...common, attestation, publicKey }; }
   if (command === 'policy-validate' || command === 'policy-evaluate' || command === 'release-check') {
@@ -217,6 +233,16 @@ async function main(): Promise<number> {
     try { config = await loadConfig(repository.root, options.config); }
     catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
 
+    if (options.command === 'services') {
+      const services = await discoverServices(repository.root, config);
+      const rendered = options.format === 'json'
+        ? `${JSON.stringify({ schemaVersion: '1.0.0', services }, null, 2)}\n`
+        : `${services.map((item) => `${item.name}\t${item.kind}\t${item.root || '.'}`).join('\n')}\n`;
+      if (options.output) console.log(`Service inventory written: ${await writeOutput(repository.root, options.output, rendered)}`);
+      else process.stdout.write(rendered);
+      return EXIT_CODES.PASS;
+    }
+
     if (options.command === 'provenance-verify') {
       const raw = JSON.parse(await readFile(resolve(repository.root, options.attestation), 'utf8')) as SignedAttestation;
       const ok = await verifyAttestation(raw, resolve(repository.root, options.publicKey));
@@ -258,10 +284,37 @@ async function main(): Promise<number> {
       }
     }
 
+    const ciContext = detectCi(config);
+    const plan = await buildIncrementalPlan({
+      root: repository.root,
+      repository: repository.repository,
+      commitSha: repository.commitSha,
+      config,
+      ci: ciContext,
+      ...(options.full !== undefined ? { forceFull: options.full } : {}),
+      ...(options.base ? { baseRef: options.base } : {}),
+      ...(options.head ? { headRef: options.head } : {})
+    });
+    let changedFiles = plan.changedFiles;
+    if (options.service && plan.mode === 'incremental') {
+      const services = await discoverServices(repository.root, config);
+      const selected = services.find((item) => item.name === options.service || item.root === options.service);
+      if (!selected) throw new Error(`Unknown service: ${options.service}`);
+      if (selected.root) changedFiles = changedFiles.filter((file) => file === selected.root || file.startsWith(`${selected.root}/`));
+    }
+    const execution = {
+      mode: plan.mode,
+      ...(plan.baseRef ? { baseRef: plan.baseRef } : {}),
+      ...(plan.headRef ? { headRef: plan.headRef } : {}),
+      changedFiles,
+      ...(options.service ? { service: options.service } : {}),
+      ...((options.ci || ciContext.detected) ? { ci: ciContext } : {})
+    } as const;
     const report = await runScan({
       repository,
       config,
       scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new GitAssuranceScanner(), new ProvenanceScanner()],
+      execution,
       ...(options.service ? { service: options.service } : {})
     });
 
@@ -283,6 +336,10 @@ async function main(): Promise<number> {
           : `${renderPolicyEvaluation(report)}\nRelease gate: ${release.decision.decision}\nRelease ID: ${release.decision.releaseId}\n`;
       if (options.output) console.log(`Release report written: ${await writeOutput(repository.root, options.output, rendered)}`);
       else process.stdout.write(rendered);
+      if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+      if (release.decision.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
+        await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
+      }
       return release.decision.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
     }
 
@@ -292,6 +349,10 @@ async function main(): Promise<number> {
       else if (options.format === 'sarif') console.log(`SARIF report written: ${await writeOutput(repository.root, options.output, rendered)}`);
       else { console.error('--output requires --format json or sarif for scan/check/policy evaluate'); return EXIT_CODES.CONFIGURATION_FAILURE; }
     } else process.stdout.write(rendered);
+    if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+    if (report.policy.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
+      await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
+    }
     return report.policy.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
   } catch (error) {
     console.error(`Runtime failure: ${(error as Error).message}`);

@@ -67,12 +67,16 @@
     ],
     "requiredScanners": [
       "secrets",
-      "dependencies"
+      "dependencies",
+      "sast",
+      "git-assurance"
     ],
     "directory": ".sentrycode/policies",
     "scannerFailureModes": {
       "secrets": "fail",
-      "dependencies": "fail"
+      "dependencies": "fail",
+      "sast": "fail",
+      "git-assurance": "fail"
     },
     "context": {
       "tenant": "example-tenant",
@@ -112,5 +116,22 @@
     "artifactPaths": [],
     "signingPrivateKeyFile": "",
     "signingPublicKeyFile": ""
+  },
+  "ci": {
+    "enabled": true,
+    "provider": "auto",
+    "annotations": true
+  },
+  "monorepo": {
+    "enabled": true,
+    "serviceRoots": [],
+    "discoverWorkspaces": true
+  },
+  "incremental": {
+    "enabled": true,
+    "baseRef": "",
+    "headRef": "HEAD",
+    "cacheFile": ".sentrycode/cache/incremental.json",
+    "scannerTimeoutMs": 120000
   }
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { EvidenceRecord, PolicyContext, ScanReport, ScannerPlugin, ScannerResult, SentryCodeConfig } from './types.js';
+import type { EvidenceRecord, PolicyContext, ScanExecutionContext, ScanReport, ScannerPlugin, ScannerResult, SentryCodeConfig } from './types.js';
 import type { RepositoryContext } from './types.js';
 import { SCHEMA_VERSION } from './types.js';
 import { evaluatePolicy } from '../policy/evaluate.js';
@@ -21,27 +21,50 @@ export async function runScan(args: {
   scanners: ScannerPlugin[];
   now?: () => Date;
   service?: string;
+  execution?: ScanExecutionContext;
 }): Promise<ScanReport> {
   const now = args.now ?? (() => new Date());
   const startedAt = now().toISOString();
-  const scannerResults: ScannerResult[] = [];
-
-  for (const scanner of args.scanners) {
+  const runOne = async (scanner: ScannerPlugin): Promise<ScannerResult> => {
     const started = performance.now();
     try {
-      const result = await scanner.scan({ repository: args.repository, config: args.config, now });
-      scannerResults.push({ ...result, status: result.status ?? 'success' });
+      const timeoutMs = args.config.incremental.scannerTimeoutMs;
+      const scan = scanner.scan({
+        repository: args.repository,
+        config: args.config,
+        now,
+        ...(args.execution ? { execution: args.execution } : {})
+      });
+      let result: ScannerResult;
+      if (timeoutMs > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          result = await Promise.race([
+            scan,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`scanner timed out after ${timeoutMs}ms`)), timeoutMs);
+            })
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      } else {
+        result = await scan;
+      }
+      return { ...result, status: result.status ?? 'success' };
     } catch (error) {
-      scannerResults.push({
+      return {
         scanner: scanner.id,
         findings: [],
         evidence: [],
         durationMs: Math.round(performance.now() - started),
         status: 'failed',
         error: (error as Error).message
-      });
+      };
     }
-  }
+  };
+  // Run independent scanners concurrently, while preserving the configured scanner order in results.
+  const scannerResults: ScannerResult[] = await Promise.all(args.scanners.map((scanner) => runOne(scanner)));
 
   const policyContext: PolicyContext = {
     repository: args.repository.repository,
@@ -94,6 +117,7 @@ export async function runScan(args: {
     repository: args.repository,
     scanners: scannerResults,
     policy,
-    evidence: [...scannerResults.flatMap((result) => result.evidence), policyEvidence]
+    evidence: [...scannerResults.flatMap((result) => result.evidence), policyEvidence],
+    ...(args.execution ? { execution: args.execution } : {})
   };
 }

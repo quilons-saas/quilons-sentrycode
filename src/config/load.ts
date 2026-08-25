@@ -6,6 +6,7 @@ import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/typ
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
 const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python']);
+const VALID_CI_PROVIDERS = new Set(['auto','github','gitlab','azure-devops','jenkins','generic','local']);
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -54,6 +55,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const sast = raw.sast === undefined ? {} : asObject(raw.sast, 'sast');
   const gitAssurance = raw.gitAssurance === undefined ? {} : asObject(raw.gitAssurance, 'gitAssurance');
   const provenance = raw.provenance === undefined ? {} : asObject(raw.provenance, 'provenance');
+  const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
+  const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
+  const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
   const policy = raw.policy === undefined ? {} : asObject(raw.policy, 'policy');
   const policyContext = policy.context === undefined ? {} : asObject(policy.context, 'policy.context');
   const opa = policy.opa === undefined ? {} : asObject(policy.opa, 'policy.opa');
@@ -144,6 +148,27 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       signingPrivateKeyFile: typeof provenance.signingPrivateKeyFile === 'string' ? provenance.signingPrivateKeyFile : DEFAULT_CONFIG.provenance.signingPrivateKeyFile,
       signingPublicKeyFile: typeof provenance.signingPublicKeyFile === 'string' ? provenance.signingPublicKeyFile : DEFAULT_CONFIG.provenance.signingPublicKeyFile
     },
+    ci: {
+      enabled: typeof ci.enabled === 'boolean' ? ci.enabled : DEFAULT_CONFIG.ci.enabled,
+      provider: (() => {
+        const provider = typeof ci.provider === 'string' ? ci.provider : DEFAULT_CONFIG.ci.provider;
+        if (!VALID_CI_PROVIDERS.has(provider)) throw new Error('ci.provider is unsupported');
+        return provider as SentryCodeConfig['ci']['provider'];
+      })(),
+      annotations: typeof ci.annotations === 'boolean' ? ci.annotations : DEFAULT_CONFIG.ci.annotations
+    },
+    monorepo: {
+      enabled: typeof monorepo.enabled === 'boolean' ? monorepo.enabled : DEFAULT_CONFIG.monorepo.enabled,
+      serviceRoots: stringArray(monorepo.serviceRoots, DEFAULT_CONFIG.monorepo.serviceRoots, 'monorepo.serviceRoots'),
+      discoverWorkspaces: typeof monorepo.discoverWorkspaces === 'boolean' ? monorepo.discoverWorkspaces : DEFAULT_CONFIG.monorepo.discoverWorkspaces
+    },
+    incremental: {
+      enabled: typeof incremental.enabled === 'boolean' ? incremental.enabled : DEFAULT_CONFIG.incremental.enabled,
+      baseRef: typeof incremental.baseRef === 'string' ? incremental.baseRef : DEFAULT_CONFIG.incremental.baseRef,
+      headRef: typeof incremental.headRef === 'string' ? incremental.headRef : DEFAULT_CONFIG.incremental.headRef,
+      cacheFile: typeof incremental.cacheFile === 'string' ? incremental.cacheFile : DEFAULT_CONFIG.incremental.cacheFile,
+      scannerTimeoutMs: typeof incremental.scannerTimeoutMs === 'number' ? incremental.scannerTimeoutMs : DEFAULT_CONFIG.incremental.scannerTimeoutMs
+    },
     policy: {
       failOn: (failOn as string[]).map((v) => v as Severity),
       warnOn: (warnOn as string[]).map((v) => v as Severity),
@@ -172,13 +197,31 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   };
 }
 
+function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string, string | undefined> = process.env): SentryCodeConfig {
+  const next = structuredClone(config);
+  const provider = env.SENTRYCODE_CI_PROVIDER;
+  if (provider) {
+    if (!VALID_CI_PROVIDERS.has(provider)) throw new Error('SENTRYCODE_CI_PROVIDER is unsupported');
+    next.ci.provider = provider as SentryCodeConfig['ci']['provider'];
+  }
+  if (env.SENTRYCODE_INCREMENTAL_BASE !== undefined) next.incremental.baseRef = env.SENTRYCODE_INCREMENTAL_BASE;
+  if (env.SENTRYCODE_INCREMENTAL_HEAD) next.incremental.headRef = env.SENTRYCODE_INCREMENTAL_HEAD;
+  if (env.SENTRYCODE_SCANNER_TIMEOUT_MS) {
+    const value = Number(env.SENTRYCODE_SCANNER_TIMEOUT_MS);
+    if (!Number.isFinite(value) || value < 0) throw new Error('SENTRYCODE_SCANNER_TIMEOUT_MS must be a non-negative number');
+    next.incremental.scannerTimeoutMs = value;
+  }
+  if (env.SENTRYCODE_DISABLE_CI_ANNOTATIONS === 'true') next.ci.annotations = false;
+  return next;
+}
+
 export async function loadConfig(root: string, explicitPath?: string): Promise<SentryCodeConfig> {
   const path = explicitPath ? resolve(root, explicitPath) : resolve(root, '.sentrycode/config.json');
   try {
     const raw = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    return mergeConfig(asObject(raw, 'config'));
+    return applyEnvironmentOverrides(mergeConfig(asObject(raw, 'config')));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !explicitPath) return structuredClone(DEFAULT_CONFIG);
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !explicitPath) return applyEnvironmentOverrides(structuredClone(DEFAULT_CONFIG));
     if (error instanceof SyntaxError) throw new Error(`Invalid JSON in SentryCode config: ${path}`);
     throw error;
   }

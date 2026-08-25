@@ -1,0 +1,20 @@
+name: SentryCode
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  sentrycode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/cli/main.js check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif

@@ -7,6 +7,8 @@ export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
 export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
 export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
 export type SastLanguage = 'javascript' | 'typescript' | 'python';
+export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'generic' | 'local';
+export type ScanMode = 'full' | 'incremental';
 
 export interface RepositoryContext {
   root: string;
@@ -60,10 +62,47 @@ export interface ScannerResult {
   error?: string;
 }
 
+export interface ScanExecutionContext {
+  mode: ScanMode;
+  baseRef?: string;
+  headRef?: string;
+  changedFiles: string[];
+  service?: string;
+  ci?: CiContext;
+}
+
 export interface ScannerContext {
   repository: RepositoryContext;
   config: SentryCodeConfig;
   now: () => Date;
+  execution?: ScanExecutionContext;
+}
+
+export interface CiContext {
+  provider: CiProvider;
+  detected: boolean;
+  pullRequest: boolean;
+  baseRef?: string;
+  headRef?: string;
+  branch?: string;
+  repository?: string;
+  buildId?: string;
+  jobId?: string;
+}
+
+export interface ServiceComponent {
+  name: string;
+  root: string;
+  kind: 'node' | 'python' | 'generic';
+}
+
+export interface IncrementalPlan {
+  mode: ScanMode;
+  baseRef?: string;
+  headRef?: string;
+  changedFiles: string[];
+  affectedServices: ServiceComponent[];
+  cacheHit: boolean;
 }
 
 export interface ScannerPlugin {
@@ -263,6 +302,23 @@ export interface SentryCodeConfig {
     signingPrivateKeyFile: string;
     signingPublicKeyFile: string;
   };
+  ci: {
+    enabled: boolean;
+    provider: 'auto' | CiProvider;
+    annotations: boolean;
+  };
+  monorepo: {
+    enabled: boolean;
+    serviceRoots: string[];
+    discoverWorkspaces: boolean;
+  };
+  incremental: {
+    enabled: boolean;
+    baseRef: string;
+    headRef: string;
+    cacheFile: string;
+    scannerTimeoutMs: number;
+  };
   waivers: {
     file: string;
     requireApproval: boolean;
@@ -298,6 +354,7 @@ export interface ScanReport {
   scanners: ScannerResult[];
   policy: PolicyResult;
   evidence: EvidenceRecord[];
+  execution?: ScanExecutionContext;
 }
 
 export interface ReleaseDecision {

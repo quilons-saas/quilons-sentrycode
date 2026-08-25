@@ -1,0 +1,17 @@
+pipeline {
+  agent any
+  stages {
+    stage('SentryCode') {
+      steps {
+        sh 'npm ci'
+        sh 'npm run build'
+        sh 'node dist/cli/main.js check . --ci --format json --output .sentrycode/out/sentrycode.json'
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: '.sentrycode/out/**', allowEmptyArchive: true
+    }
+  }
+}
