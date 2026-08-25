@@ -15,6 +15,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
-      - run: npm run build
-      - run: node dist/cli/main.js check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
+          registry-url: ${{ vars.QUILONS_NPM_REGISTRY || 'https://registry.npmjs.org' }}
+      - name: Install SentryCode
+        run: npm install --no-save @quilons/sentrycode@0.1.0
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.QUILONS_NPM_TOKEN }}
+      - name: Run SentryCode
+        run: npx --no-install sentrycode check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif

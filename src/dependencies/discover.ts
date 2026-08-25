@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { DependencyComponent, DependencySnapshot } from '../core/types.js';
 
 interface PackageLock {
@@ -80,10 +80,11 @@ export function parseDependencyFiles(files: Record<string, string>, generatedAt:
   return { generatedAt, components: unique };
 }
 
-export async function discoverDependencies(root: string, generatedAt = new Date().toISOString()): Promise<DependencySnapshot> {
+export async function discoverDependencies(root: string, generatedAt = new Date().toISOString(), serviceRoot = ''): Promise<DependencySnapshot> {
   const files: Record<string, string> = {};
+  const base = serviceRoot ? resolve(root, serviceRoot) : root;
   for (const name of ['package-lock.json', 'requirements.txt', 'pyproject.toml']) {
-    const path = join(root, name);
+    const path = join(base, name);
     if (await exists(path)) files[name] = await readFile(path, 'utf8');
   }
   return parseDependencyFiles(files, generatedAt);

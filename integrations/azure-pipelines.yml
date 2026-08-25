@@ -4,9 +4,7 @@ steps:
   - task: NodeTool@0
     inputs:
       versionSpec: '20.x'
-  - script: npm ci
-    displayName: Install
-  - script: npm run build
-    displayName: Build SentryCode
-  - script: node dist/cli/main.js check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
+  - script: npm install --no-save @quilons/sentrycode@0.1.0
+    displayName: Install SentryCode
+  - script: npx --no-install sentrycode check . --ci --format sarif --output .sentrycode/out/sentrycode.sarif
     displayName: SentryCode

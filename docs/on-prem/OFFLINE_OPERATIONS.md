@@ -21,3 +21,11 @@ Published Compliance runs include an `integrity.json` hash manifest. Reads verif
 ## Diagnostics
 
 `enterprise diagnostics` checks configuration, vulnerability database availability/schema, required signature material, repository writeability, and package metadata without transmitting source code.
+
+## Vulnerability intelligence lifecycle
+
+A connected administrative environment can run `sentrycode intelligence sync` to query OSV.dev using only discovered package ecosystem/name/version values. Source code is not uploaded. The resulting local database can be converted into an offline transfer bundle with `sentrycode intelligence bundle --output <file>`, optionally signed with an approved private key, and imported by disconnected installations.
+
+## Evidence and audit trust
+
+Set `integrity.evidenceSigningPrivateKeyFile` on the evidence-producing installation and `integrity.evidenceSigningPublicKeyFile` on evidence consumers/readers to require asymmetric verification of per-run evidence manifests. The same key pair can sign audit-chain events. `sentrycode enterprise audit verify` verifies the hash chain and, when a public key is configured, every event signature.

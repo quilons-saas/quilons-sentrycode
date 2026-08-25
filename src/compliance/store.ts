@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import type { ComplianceIdentity, CompliancePublication, StoredRunSummary } from './contracts.js';
 import { tenantStoreRoot } from './scope.js';
-import { writeIntegrityManifest, verifyIntegrityManifest } from '../enterprise/evidence-integrity.js';
+import { signIntegrityManifest, verifyIntegrityManifest, verifyIntegrityManifestSignature, writeIntegrityManifest } from '../enterprise/evidence-integrity.js';
 
 function safeRunId(value: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error('Invalid run ID');
@@ -21,7 +21,7 @@ async function atomicJson(path: string, value: unknown): Promise<void> {
 }
 
 export class LocalComplianceStore {
-  constructor(private readonly repositoryRoot: string, private readonly storeDirectory: string) {}
+  constructor(private readonly repositoryRoot: string, private readonly storeDirectory: string, private readonly integrity: { privateKeyFile?: string; publicKeyFile?: string } = {}) {}
 
   private root(identity: ComplianceIdentity): string { return tenantStoreRoot(this.repositoryRoot, this.storeDirectory, identity); }
   private runDir(identity: ComplianceIdentity, runId: string): string { return resolve(this.root(identity), 'runs', safeRunId(runId)); }
@@ -40,6 +40,7 @@ export class LocalComplianceStore {
     await atomicJson(resolve(dir, 'report.json'), publication.report);
     await atomicJson(resolve(dir, 'events.json'), publication.events);
     await writeIntegrityManifest(dir);
+    if (this.integrity.privateKeyFile) await signIntegrityManifest(dir, resolve(this.repositoryRoot, this.integrity.privateKeyFile));
   }
 
   async getPublication(identity: ComplianceIdentity, runId: string): Promise<CompliancePublication | null> {
@@ -47,6 +48,10 @@ export class LocalComplianceStore {
     try {
       const integrity = await verifyIntegrityManifest(dir);
       if (!integrity.ok) throw new Error(`Compliance run ${runId} failed integrity verification: ${integrity.mismatches.join(', ')}`);
+      if (this.integrity.publicKeyFile) {
+        const signed = await verifyIntegrityManifestSignature(dir, resolve(this.repositoryRoot, this.integrity.publicKeyFile)).catch(() => false);
+        if (!signed) throw new Error(`Compliance run ${runId} failed signed manifest verification`);
+      }
       const [summary, evidence, report, events] = await Promise.all([
         readJson<CompliancePublication['summary']>(resolve(dir, 'summary.json')),
         readJson<CompliancePublication['evidence']>(resolve(dir, 'evidence.json')),

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { createPublicKey, verify } from 'node:crypto';
+import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { sha256 } from '../utils/hash.js';
 import type { VulnerabilityAdvisory } from '../core/types.js';
 
@@ -35,4 +35,24 @@ export async function importVulnerabilityBundle(root: string, bundleFile: string
   await writeFile(tmp, `${JSON.stringify(bundle.database, null, 2)}\n`, 'utf8');
   await rename(tmp, target);
   return { id: bundle.id, version: bundle.version, advisoryCount: bundle.database.advisories.length, updatedAt: bundle.database.updatedAt };
+}
+
+
+export async function buildVulnerabilityBundle(root: string, databaseFile: string, outputFile: string, options: { id?: string; version?: string; privateKeyFile?: string } = {}): Promise<VulnerabilityBundle> {
+  const database = JSON.parse(await readFile(resolve(root, databaseFile), 'utf8')) as VulnerabilityBundle['database'];
+  if (database.schemaVersion !== 1 || !Array.isArray(database.advisories)) throw new Error('Unsupported vulnerability database for bundle generation');
+  const canonical = JSON.stringify(database);
+  const bundle: VulnerabilityBundle = {
+    schemaVersion: 1,
+    id: options.id ?? 'quilons-sentrycode-vulnerability-intelligence',
+    version: options.version ?? database.updatedAt,
+    createdAt: new Date().toISOString(),
+    database,
+    databaseSha256: sha256(canonical),
+    ...(options.privateKeyFile ? { signature: sign('sha256', Buffer.from(canonical), createPrivateKey(await readFile(resolve(root, options.privateKeyFile), 'utf8'))).toString('base64') } : {})
+  };
+  const target = resolve(root, outputFile); await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(bundle, null, 2)}
+`, 'utf8');
+  return bundle;
 }

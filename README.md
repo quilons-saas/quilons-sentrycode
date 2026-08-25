@@ -2,7 +2,7 @@
 
 **Catch compliance issues at code level — before merge, before release, before audit.**
 
-SentryCode is a standalone developer/CI compliance engine and a future plugin for QUILONS Compliance. It scans repositories, normalizes findings and evidence, evaluates governed policy, and can act as a deterministic release gate.
+SentryCode is a standalone developer/CI compliance engine and a governed plugin for QUILONS Compliance. It scans repositories, normalizes findings and evidence, evaluates governed policy, and can act as a deterministic release gate.
 
 ## Requirements
 
@@ -230,3 +230,73 @@ sentrycode enterprise retention .
 ```
 
 See `docs/on-prem/OFFLINE_OPERATIONS.md` for operational guidance.
+
+## Slice 8: automotive compliance pack
+
+Automotive assurance is adapter-driven. SentryCode imports rule-ID based native JSON or SARIF output from approved MISRA C, MISRA C++ and AUTOSAR C++ analyzers, applies governed deviations, and emits evidence aligned to ISO/SAE 21434 and UNECE R155/R156 engineering assurance. SentryCode does not redistribute proprietary rule text or claim that a scan alone establishes regulatory compliance.
+
+## Slice 9: product completion and trust
+
+Slice 9 closes the first product-completion blockers identified after the Slice 1–8 review.
+
+### Standalone distribution
+
+`@quilons/sentrycode` is now packable/installable as a normal CLI package. Customer repositories install SentryCode rather than building the SentryCode source repository:
+
+```bash
+npm install --save-dev @quilons/sentrycode@0.1.0
+npx --no-install sentrycode check .
+```
+
+`npm run package:smoke` builds a package tarball, installs it into an unrelated temporary repository, and executes the installed CLI. CI templates under `integrations/` follow the same external-package model.
+
+### Preventing secrets before Git history
+
+```bash
+sentrycode hooks install .
+sentrycode secrets staged .
+sentrycode secrets history .
+```
+
+The pre-commit hook scans staged/index content, not merely the working tree. The pre-push hook runs the normal policy gate. Historical scanning is bounded by `secrets.historyMaxCommits`.
+
+### External SAST
+
+Native SAST remains a baseline. Specialist scanners can run outside or through SentryCode and provide SARIF 2.1.0. Configure `sast.external` with either an analyzer command plus arguments or an existing SARIF path. Results are normalized into the same SentryCode finding/evidence authority as native rules.
+
+### Service-scoped dependency assurance
+
+`--service` now scopes dependency/SBOM discovery to the selected monorepo service as well as file-level scanning/policy. npm license metadata missing from lockfiles is enriched from local installed package manifests without source-code egress.
+
+### Vulnerability intelligence lifecycle
+
+```bash
+sentrycode intelligence sync .
+sentrycode intelligence sync . --service api
+sentrycode intelligence bundle . --output vuln-bundle.json --key private.pem
+sentrycode intelligence import . --bundle vuln-bundle.json --public-key public.pem
+```
+
+Online synchronization queries OSV.dev for the exact dependency versions discovered in the repository and writes SentryCode's local advisory DB. Air-gapped deployments continue to consume digest-verified, optionally signed bundles.
+
+### Tenant-bound Compliance authorization
+
+For multi-tenant QUILONS Compliance deployments, set `compliance.authMode` to `hmac` and provide `SENTRYCODE_PLUGIN_HMAC_SECRET`. Tokens contain tenant/project, issuer, audience and expiry claims. Run-data routes derive authority from those claims and reject query-parameter scope escalation.
+
+```bash
+sentrycode compliance token . --tenant tenant-a --project project-a --ttl 900
+```
+
+Static bearer mode remains available for local/single-scope compatibility.
+
+### Stronger integrity
+
+Compliance evidence manifests can be signed with `integrity.evidenceSigningPrivateKeyFile` and verified using `integrity.evidenceSigningPublicKeyFile`. The enterprise audit log is now hash-chained; rewriting a prior event invalidates subsequent chain verification:
+
+```bash
+sentrycode enterprise audit verify .
+```
+
+### GitHub governance
+
+When `gitAssurance.github.enabled` is true, SentryCode queries GitHub branch protection using the configured token environment variable and can enforce protected branches, minimum approving reviews and required status checks. Provider API state is normalized through the existing Git governance boundary.

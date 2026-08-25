@@ -11,6 +11,8 @@ export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'gen
 export type ScanMode = 'full' | 'incremental';
 export type AutomotiveStandard = 'misra-c' | 'misra-cpp' | 'autosar-cpp';
 export type AutomotiveEvidenceTarget = 'iso-sae-21434' | 'unece-r155' | 'unece-r156';
+export type ExternalSastFormat = 'sarif';
+export type ComplianceAuthMode = 'static' | 'hmac';
 
 export interface RepositoryContext {
   root: string;
@@ -239,6 +241,7 @@ export interface SentryCodeConfig {
     enabled: boolean;
     highEntropy: boolean;
     minEntropyLength: number;
+    historyMaxCommits: number;
     customPatterns: Array<{
       id: string;
       pattern: string;
@@ -266,6 +269,11 @@ export interface SentryCodeConfig {
     enabled: boolean;
     databaseFile: string;
     failOnKnownExploited: boolean;
+    osv: {
+      enabled: boolean;
+      endpoint: string;
+      timeoutMs: number;
+    };
   };
   sbom: {
     defaultFormat: 'cyclonedx' | 'spdx';
@@ -291,12 +299,27 @@ export interface SentryCodeConfig {
   sast: {
     enabled: boolean;
     languages: SastLanguage[];
+    external: {
+      enabled: boolean;
+      command: string;
+      args: string[];
+      sarifFile: string;
+      timeoutMs: number;
+    };
   };
   gitAssurance: {
     enabled: boolean;
     requireCleanTree: boolean;
     requireSignedCommit: boolean;
     allowedEmailDomains: string[];
+    github: {
+      enabled: boolean;
+      tokenEnv: string;
+      apiBaseUrl: string;
+      requireProtectedBranch: boolean;
+      minimumApprovals: number;
+      requireStatusChecks: boolean;
+    };
   };
   provenance: {
     enabled: boolean;
@@ -341,6 +364,10 @@ export interface SentryCodeConfig {
     listenHost: string;
     listenPort: number;
     apiTokenEnv: string;
+    authMode: ComplianceAuthMode;
+    hmacSecretEnv: string;
+    tokenIssuer: string;
+    tokenAudience: string;
   };
   offline: {
     enabled: boolean;
@@ -353,6 +380,8 @@ export interface SentryCodeConfig {
     publicKeyFile: string;
     auditLogFile: string;
     evidenceManifests: boolean;
+    evidenceSigningPrivateKeyFile: string;
+    evidenceSigningPublicKeyFile: string;
   };
   operations: {
     backupDirectory: string;

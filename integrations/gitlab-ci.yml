@@ -2,9 +2,8 @@ sentrycode:
   image: node:20
   stage: test
   script:
-    - npm ci
-    - npm run build
-    - node dist/cli/main.js check . --ci --format json --output .sentrycode/out/sentrycode.json
+    - npm install --no-save @quilons/sentrycode@0.1.0
+    - npx --no-install sentrycode check . --ci --format json --output .sentrycode/out/sentrycode.json
   artifacts:
     when: always
     paths:

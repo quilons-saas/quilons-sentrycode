@@ -55,7 +55,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const vulnerabilities = raw.vulnerabilities === undefined ? {} : asObject(raw.vulnerabilities, 'vulnerabilities');
   const sbom = raw.sbom === undefined ? {} : asObject(raw.sbom, 'sbom');
   const sast = raw.sast === undefined ? {} : asObject(raw.sast, 'sast');
+  const externalSast = sast.external === undefined ? {} : asObject(sast.external, 'sast.external');
   const gitAssurance = raw.gitAssurance === undefined ? {} : asObject(raw.gitAssurance, 'gitAssurance');
+  const githubAssurance = gitAssurance.github === undefined ? {} : asObject(gitAssurance.github, 'gitAssurance.github');
   const provenance = raw.provenance === undefined ? {} : asObject(raw.provenance, 'provenance');
   const automotive = raw.automotive === undefined ? {} : asObject(raw.automotive, 'automotive');
   const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
@@ -104,6 +106,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       enabled: typeof secrets.enabled === 'boolean' ? secrets.enabled : DEFAULT_CONFIG.secrets.enabled,
       highEntropy: typeof secrets.highEntropy === 'boolean' ? secrets.highEntropy : DEFAULT_CONFIG.secrets.highEntropy,
       minEntropyLength: typeof secrets.minEntropyLength === 'number' ? secrets.minEntropyLength : DEFAULT_CONFIG.secrets.minEntropyLength,
+      historyMaxCommits: typeof secrets.historyMaxCommits === 'number' && secrets.historyMaxCommits > 0 ? Math.floor(secrets.historyMaxCommits) : DEFAULT_CONFIG.secrets.historyMaxCommits,
       customPatterns: customPatterns.map((item, index) => {
         const entry = asObject(item, `secrets.customPatterns[${index}]`);
         if (typeof entry.id !== 'string' || typeof entry.pattern !== 'string') throw new Error(`secrets.customPatterns[${index}] requires id and pattern`);
@@ -132,7 +135,15 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
     vulnerabilities: {
       enabled: typeof vulnerabilities.enabled === 'boolean' ? vulnerabilities.enabled : DEFAULT_CONFIG.vulnerabilities.enabled,
       databaseFile: typeof vulnerabilities.databaseFile === 'string' ? vulnerabilities.databaseFile : DEFAULT_CONFIG.vulnerabilities.databaseFile,
-      failOnKnownExploited: typeof vulnerabilities.failOnKnownExploited === 'boolean' ? vulnerabilities.failOnKnownExploited : DEFAULT_CONFIG.vulnerabilities.failOnKnownExploited
+      failOnKnownExploited: typeof vulnerabilities.failOnKnownExploited === 'boolean' ? vulnerabilities.failOnKnownExploited : DEFAULT_CONFIG.vulnerabilities.failOnKnownExploited,
+      osv: (() => {
+        const rawOsv = vulnerabilities.osv === undefined ? {} : asObject(vulnerabilities.osv, 'vulnerabilities.osv');
+        return {
+          enabled: typeof rawOsv.enabled === 'boolean' ? rawOsv.enabled : DEFAULT_CONFIG.vulnerabilities.osv.enabled,
+          endpoint: typeof rawOsv.endpoint === 'string' ? rawOsv.endpoint : DEFAULT_CONFIG.vulnerabilities.osv.endpoint,
+          timeoutMs: typeof rawOsv.timeoutMs === 'number' && rawOsv.timeoutMs > 0 ? rawOsv.timeoutMs : DEFAULT_CONFIG.vulnerabilities.osv.timeoutMs
+        };
+      })()
     },
     sbom: { defaultFormat: sbomFormat },
     sast: {
@@ -141,13 +152,28 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
         const values = stringArray(sast.languages, DEFAULT_CONFIG.sast.languages, 'sast.languages');
         if (values.some((value) => !VALID_SAST_LANGUAGES.has(value))) throw new Error('sast.languages contains an unsupported language');
         return values as SentryCodeConfig['sast']['languages'];
-      })()
+      })(),
+      external: {
+        enabled: typeof externalSast.enabled === 'boolean' ? externalSast.enabled : DEFAULT_CONFIG.sast.external.enabled,
+        command: typeof externalSast.command === 'string' ? externalSast.command : DEFAULT_CONFIG.sast.external.command,
+        args: stringArray(externalSast.args, DEFAULT_CONFIG.sast.external.args, 'sast.external.args'),
+        sarifFile: typeof externalSast.sarifFile === 'string' ? externalSast.sarifFile : DEFAULT_CONFIG.sast.external.sarifFile,
+        timeoutMs: typeof externalSast.timeoutMs === 'number' && externalSast.timeoutMs > 0 ? externalSast.timeoutMs : DEFAULT_CONFIG.sast.external.timeoutMs
+      }
     },
     gitAssurance: {
       enabled: typeof gitAssurance.enabled === 'boolean' ? gitAssurance.enabled : DEFAULT_CONFIG.gitAssurance.enabled,
       requireCleanTree: typeof gitAssurance.requireCleanTree === 'boolean' ? gitAssurance.requireCleanTree : DEFAULT_CONFIG.gitAssurance.requireCleanTree,
       requireSignedCommit: typeof gitAssurance.requireSignedCommit === 'boolean' ? gitAssurance.requireSignedCommit : DEFAULT_CONFIG.gitAssurance.requireSignedCommit,
-      allowedEmailDomains: stringArray(gitAssurance.allowedEmailDomains, DEFAULT_CONFIG.gitAssurance.allowedEmailDomains, 'gitAssurance.allowedEmailDomains')
+      allowedEmailDomains: stringArray(gitAssurance.allowedEmailDomains, DEFAULT_CONFIG.gitAssurance.allowedEmailDomains, 'gitAssurance.allowedEmailDomains'),
+      github: {
+        enabled: typeof githubAssurance.enabled === 'boolean' ? githubAssurance.enabled : DEFAULT_CONFIG.gitAssurance.github.enabled,
+        tokenEnv: typeof githubAssurance.tokenEnv === 'string' ? githubAssurance.tokenEnv : DEFAULT_CONFIG.gitAssurance.github.tokenEnv,
+        apiBaseUrl: typeof githubAssurance.apiBaseUrl === 'string' ? githubAssurance.apiBaseUrl : DEFAULT_CONFIG.gitAssurance.github.apiBaseUrl,
+        requireProtectedBranch: typeof githubAssurance.requireProtectedBranch === 'boolean' ? githubAssurance.requireProtectedBranch : DEFAULT_CONFIG.gitAssurance.github.requireProtectedBranch,
+        minimumApprovals: typeof githubAssurance.minimumApprovals === 'number' && githubAssurance.minimumApprovals >= 0 ? Math.floor(githubAssurance.minimumApprovals) : DEFAULT_CONFIG.gitAssurance.github.minimumApprovals,
+        requireStatusChecks: typeof githubAssurance.requireStatusChecks === 'boolean' ? githubAssurance.requireStatusChecks : DEFAULT_CONFIG.gitAssurance.github.requireStatusChecks
+      }
     },
     provenance: {
       enabled: typeof provenance.enabled === 'boolean' ? provenance.enabled : DEFAULT_CONFIG.provenance.enabled,
@@ -203,7 +229,11 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       timeoutMs: typeof compliance.timeoutMs === 'number' && compliance.timeoutMs >= 0 ? compliance.timeoutMs : DEFAULT_CONFIG.compliance.timeoutMs,
       listenHost: typeof compliance.listenHost === 'string' ? compliance.listenHost : DEFAULT_CONFIG.compliance.listenHost,
       listenPort: typeof compliance.listenPort === 'number' && compliance.listenPort >= 0 && compliance.listenPort <= 65535 ? compliance.listenPort : DEFAULT_CONFIG.compliance.listenPort,
-      apiTokenEnv: typeof compliance.apiTokenEnv === 'string' ? compliance.apiTokenEnv : DEFAULT_CONFIG.compliance.apiTokenEnv
+      apiTokenEnv: typeof compliance.apiTokenEnv === 'string' ? compliance.apiTokenEnv : DEFAULT_CONFIG.compliance.apiTokenEnv,
+      authMode: compliance.authMode === 'hmac' ? 'hmac' : 'static',
+      hmacSecretEnv: typeof compliance.hmacSecretEnv === 'string' ? compliance.hmacSecretEnv : DEFAULT_CONFIG.compliance.hmacSecretEnv,
+      tokenIssuer: typeof compliance.tokenIssuer === 'string' ? compliance.tokenIssuer : DEFAULT_CONFIG.compliance.tokenIssuer,
+      tokenAudience: typeof compliance.tokenAudience === 'string' ? compliance.tokenAudience : DEFAULT_CONFIG.compliance.tokenAudience
     },
     offline: {
       enabled: typeof offline.enabled === 'boolean' ? offline.enabled : DEFAULT_CONFIG.offline.enabled,
@@ -215,7 +245,9 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       configSignatureFile: typeof integrity.configSignatureFile === 'string' ? integrity.configSignatureFile : DEFAULT_CONFIG.integrity.configSignatureFile,
       publicKeyFile: typeof integrity.publicKeyFile === 'string' ? integrity.publicKeyFile : DEFAULT_CONFIG.integrity.publicKeyFile,
       auditLogFile: typeof integrity.auditLogFile === 'string' ? integrity.auditLogFile : DEFAULT_CONFIG.integrity.auditLogFile,
-      evidenceManifests: typeof integrity.evidenceManifests === 'boolean' ? integrity.evidenceManifests : DEFAULT_CONFIG.integrity.evidenceManifests
+      evidenceManifests: typeof integrity.evidenceManifests === 'boolean' ? integrity.evidenceManifests : DEFAULT_CONFIG.integrity.evidenceManifests,
+      evidenceSigningPrivateKeyFile: typeof integrity.evidenceSigningPrivateKeyFile === 'string' ? integrity.evidenceSigningPrivateKeyFile : DEFAULT_CONFIG.integrity.evidenceSigningPrivateKeyFile,
+      evidenceSigningPublicKeyFile: typeof integrity.evidenceSigningPublicKeyFile === 'string' ? integrity.evidenceSigningPublicKeyFile : DEFAULT_CONFIG.integrity.evidenceSigningPublicKeyFile
     },
     operations: {
       backupDirectory: typeof operations.backupDirectory === 'string' ? operations.backupDirectory : DEFAULT_CONFIG.operations.backupDirectory,

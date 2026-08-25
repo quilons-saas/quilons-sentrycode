@@ -3,9 +3,8 @@ pipeline {
   stages {
     stage('SentryCode') {
       steps {
-        sh 'npm ci'
-        sh 'npm run build'
-        sh 'node dist/cli/main.js check . --ci --format json --output .sentrycode/out/sentrycode.json'
+        sh 'npm install --no-save @quilons/sentrycode@0.1.0'
+        sh 'npx --no-install sentrycode check . --ci --format json --output .sentrycode/out/sentrycode.json'
       }
     }
   }

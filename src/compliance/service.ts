@@ -7,8 +7,8 @@ import { loadPluginManifest } from './manifest.js';
 
 export class SentryCodeComplianceService {
   readonly store: LocalComplianceStore;
-  constructor(private readonly repositoryRoot: string, private readonly storeDirectory: string) {
-    this.store = new LocalComplianceStore(repositoryRoot, storeDirectory);
+  constructor(private readonly repositoryRoot: string, private readonly storeDirectory: string, integrity: { privateKeyFile?: string; publicKeyFile?: string } = {}) {
+    this.store = new LocalComplianceStore(repositoryRoot, storeDirectory, integrity);
   }
 
   health(): ComplianceHealth { return { status: 'ok', pluginId: SENTRYCODE_PLUGIN_ID, apiVersion: COMPLIANCE_API_VERSION }; }

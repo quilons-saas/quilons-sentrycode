@@ -16,11 +16,20 @@
     "sentrycode.waivers",
     "sentrycode.health",
     "sentrycode.automotive.findings",
-    "sentrycode.automotive.evidence"
+    "sentrycode.automotive.evidence",
+    "sentrycode.external-sast",
+    "sentrycode.git-governance",
+    "sentrycode.secrets.precommit",
+    "sentrycode.intelligence.sync",
+    "sentrycode.auth.scoped"
   ],
   "offlineCapable": true,
   "diagnosticsCommand": "sentrycode enterprise diagnostics",
   "backupCommand": "sentrycode enterprise backup",
   "retentionCommand": "sentrycode enterprise retention",
-  "intelligenceImportCommand": "sentrycode intelligence import --bundle <file>"
+  "intelligenceImportCommand": "sentrycode intelligence import --bundle <file>",
+  "intelligenceSyncCommand": "sentrycode intelligence sync",
+  "hookInstallCommand": "sentrycode hooks install",
+  "auditVerifyCommand": "sentrycode enterprise audit verify",
+  "packageSmokeCommand": "npm run package:smoke"
 }

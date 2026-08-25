@@ -10,6 +10,7 @@ import { SastScanner } from '../scanners/sast/scanner.js';
 import { GitAssuranceScanner } from '../scanners/git/scanner.js';
 import { ProvenanceScanner } from '../scanners/provenance.js';
 import { AutomotiveScanner } from '../scanners/automotive/scanner.js';
+import { ExternalSastScanner } from '../scanners/external-sast/scanner.js';
 import { renderSarif } from '../reporting/sarif.js';
 import { buildStatement, collectArtifacts, signStatement, verifyAttestation, type SignedAttestation } from '../provenance/attestation.js';
 import { readFile } from 'node:fs/promises';
@@ -35,11 +36,15 @@ import { LocalComplianceStore } from '../compliance/store.js';
 import { HttpCompliancePublisher } from '../compliance/publisher.js';
 import { SentryCodeComplianceService } from '../compliance/service.js';
 import { startComplianceServer } from '../compliance/server.js';
-import { importVulnerabilityBundle } from '../enterprise/intelligence.js';
+import { buildVulnerabilityBundle, importVulnerabilityBundle } from '../enterprise/intelligence.js';
+import { syncOsvDatabase } from '../vulnerabilities/osv.js';
 import { signFile, verifyFile } from '../enterprise/integrity.js';
-import { appendAuditEvent } from '../enterprise/audit.js';
+import { appendAuditEvent, verifyAuditChain } from '../enterprise/audit.js';
 import { createBackup, restoreBackup, applyRetention, applyComplianceRetention } from '../enterprise/backup.js';
 import { runDiagnostics } from '../enterprise/diagnostics.js';
+import { installGitHooks } from '../git/hooks.js';
+import { scanHistorySecrets, scanStagedSecrets } from '../git/secrets.js';
+import { issueComplianceToken } from '../compliance/auth.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
@@ -51,7 +56,7 @@ interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
-interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'intelligence-import' | 'config-sign' | 'config-verify'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; }
+interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'enterprise-audit-verify' | 'intelligence-import' | 'intelligence-sync' | 'intelligence-bundle' | 'config-sign' | 'config-verify' | 'hooks-install' | 'secrets-staged' | 'secrets-history' | 'compliance-token'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; ttl?: number; }
 
 type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | EnterpriseOptions;
 
@@ -77,10 +82,17 @@ Usage:
   sentrycode compliance run [path] --run-id ID [--tenant ID] [--project ID] [--format console|json]
   sentrycode compliance serve [path]
   sentrycode intelligence import [path] --bundle FILE [--public-key PUBLIC.pem]
+  sentrycode intelligence sync [path] [--service NAME]
+  sentrycode intelligence bundle [path] --output FILE [--key PRIVATE.pem]
+  sentrycode hooks install [path]
+  sentrycode secrets staged [path] [--format console|json]
+  sentrycode secrets history [path] [--format console|json]
+  sentrycode compliance token [path] --tenant ID --project ID [--ttl SECONDS]
   sentrycode enterprise diagnostics [path] [--format console|json]
   sentrycode enterprise backup [path]
   sentrycode enterprise restore [path] --backup PATH
   sentrycode enterprise retention [path]
+  sentrycode enterprise audit verify [path]
   sentrycode config sign [path] --key PRIVATE.pem
   sentrycode config verify [path] --public-key PUBLIC.pem
 
@@ -103,10 +115,17 @@ Commands:
   compliance run      Read one stored publication within one tenant/project scope.
   compliance serve    Serve the versioned plugin capability API for QUILONS Compliance.
   intelligence import Import an offline vulnerability intelligence bundle.
+  intelligence sync   Refresh the local vulnerability DB from OSV.dev for discovered dependencies.
+  intelligence bundle Build a digest-verified/offline-transfer vulnerability bundle.
+  hooks install       Install pre-commit staged-secret and pre-push policy gates.
+  secrets staged      Scan the Git index before a secret enters history.
+  secrets history     Scan committed history for credentials (bounded by config).
+  compliance token    Issue a tenant/project-bound HMAC capability token.
   enterprise diagnostics Run on-prem/offline readiness diagnostics.
   enterprise backup   Back up SentryCode operational state.
   enterprise restore  Restore SentryCode operational state from a backup.
   enterprise retention Apply configured retention to backups and local evidence.
+  enterprise audit verify Verify the append-only audit hash chain.
   config sign/verify  Sign or verify repository SentryCode configuration.
 
 Exit codes:
@@ -141,10 +160,17 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'compliance' && argv[1] === 'run') { command = 'compliance-run'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'serve') { command = 'compliance-serve'; offset = 2; }
   else if (argv[0] === 'intelligence' && argv[1] === 'import') { command = 'intelligence-import'; offset = 2; }
+  else if (argv[0] === 'intelligence' && argv[1] === 'sync') { command = 'intelligence-sync'; offset = 2; }
+  else if (argv[0] === 'intelligence' && argv[1] === 'bundle') { command = 'intelligence-bundle'; offset = 2; }
+  else if (argv[0] === 'hooks' && argv[1] === 'install') { command = 'hooks-install'; offset = 2; }
+  else if (argv[0] === 'secrets' && argv[1] === 'staged') { command = 'secrets-staged'; offset = 2; }
+  else if (argv[0] === 'secrets' && argv[1] === 'history') { command = 'secrets-history'; offset = 2; }
+  else if (argv[0] === 'compliance' && argv[1] === 'token') { command = 'compliance-token'; offset = 2; }
   else if (argv[0] === 'enterprise' && argv[1] === 'diagnostics') { command = 'enterprise-diagnostics'; offset = 2; }
   else if (argv[0] === 'enterprise' && argv[1] === 'backup') { command = 'enterprise-backup'; offset = 2; }
   else if (argv[0] === 'enterprise' && argv[1] === 'restore') { command = 'enterprise-restore'; offset = 2; }
   else if (argv[0] === 'enterprise' && argv[1] === 'retention') { command = 'enterprise-retention'; offset = 2; }
+  else if (argv[0] === 'enterprise' && argv[1] === 'audit' && argv[2] === 'verify') { command = 'enterprise-audit-verify'; offset = 3; }
   else if (argv[0] === 'config' && argv[1] === 'sign') { command = 'config-sign'; offset = 2; }
   else if (argv[0] === 'config' && argv[1] === 'verify') { command = 'config-verify'; offset = 2; }
   else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
@@ -170,6 +196,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let runId: string | undefined;
   let bundle: string | undefined;
   let backup: string | undefined;
+  let ttl: number | undefined;
 
   for (let i = offset; i < argv.length; i += 1) {
     const arg = argv[i]!;
@@ -185,6 +212,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--run-id') { runId = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--bundle') { bundle = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--backup') { backup = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--ttl') { const raw = Number(requireValue(argv, i, arg)); if (!Number.isFinite(raw) || raw <= 0) throw new Error('--ttl requires a positive number'); ttl = Math.floor(raw); i += 1; }
     else if (arg === '--artifact') { artifacts.push(requireValue(argv, i, arg)); i += 1; }
     else if (arg === '--key') { key = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--attestation') { attestation = requireValue(argv, i, arg); i += 1; }
@@ -204,18 +232,20 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   }
 
   const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}) };
-  if (command.startsWith('compliance-')) {
+  if (command.startsWith('compliance-') && command !== 'compliance-token') {
     if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
     if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
     return { command: command as ComplianceOptions['command'], ...common, format: scanFormat as 'console' | 'json' };
   }
-  if (command.startsWith('enterprise-') || command === 'intelligence-import' || command === 'config-sign' || command === 'config-verify') {
+  if (command.startsWith('enterprise-') || command.startsWith('intelligence-') || command === 'config-sign' || command === 'config-verify' || command === 'hooks-install' || command.startsWith('secrets-') || command === 'compliance-token') {
     if (scanFormat === 'sarif') throw new Error('enterprise commands do not support SARIF format');
     if (command === 'intelligence-import' && !bundle) throw new Error('intelligence import requires --bundle FILE');
+    if (command === 'intelligence-bundle' && !output) throw new Error('intelligence bundle requires --output FILE');
+    if (command === 'compliance-token' && (!tenant || !project)) throw new Error('compliance token requires --tenant ID and --project ID');
     if (command === 'enterprise-restore' && !backup) throw new Error('enterprise restore requires --backup PATH');
     if (command === 'config-sign' && !key) throw new Error('config sign requires --key PRIVATE.pem');
     if (command === 'config-verify' && !publicKey) throw new Error('config verify requires --public-key PUBLIC.pem');
-    return { command: command as EnterpriseOptions['command'], ...common, format: scanFormat as 'console' | 'json', ...(bundle ? { bundle } : {}), ...(backup ? { backup } : {}), ...(key ? { key } : {}), ...(publicKey ? { publicKey } : {}) };
+    return { command: command as EnterpriseOptions['command'], ...common, format: scanFormat as 'console' | 'json', ...(bundle ? { bundle } : {}), ...(backup ? { backup } : {}), ...(key ? { key } : {}), ...(publicKey ? { publicKey } : {}), ...(ttl ? { ttl } : {}) };
   }
   if (command === 'dependencies-diff') {
     if (!base) throw new Error('dependencies diff requires --base REF');
@@ -297,7 +327,7 @@ async function publishCompliance(root: string, config: SentryCodeConfig, options
   const identity = resolveComplianceIdentity(config, options);
   const manifest = await loadPluginManifest(root);
   const publication = buildPublication(identity, report, manifest.productVersion);
-  const store = new LocalComplianceStore(root, config.compliance.storeDirectory);
+  const store = new LocalComplianceStore(root, config.compliance.storeDirectory, { ...(config.integrity.evidenceSigningPrivateKeyFile ? { privateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {}), ...(config.integrity.evidenceSigningPublicKeyFile ? { publicKeyFile: config.integrity.evidenceSigningPublicKeyFile } : {}) });
   await store.publish(identity, publication);
   if (config.compliance.endpoint) {
     const token = process.env[config.compliance.tokenEnv] ?? '';
@@ -337,9 +367,35 @@ async function main(): Promise<number> {
       if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
     }
 
+    if (options.command === 'hooks-install') {
+      const hooks = await installGitHooks(repository.root); process.stdout.write(`${hooks.map((item) => `Installed ${item}`).join('\n')}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'secrets-staged' || options.command === 'secrets-history') {
+      const findings = options.command === 'secrets-staged' ? await scanStagedSecrets(repository.root, config) : await scanHistorySecrets(repository.root, config);
+      const rendered = options.format === 'json' ? `${JSON.stringify({ schemaVersion:'1.0.0', findings }, null, 2)}\n` : `${findings.length ? findings.map((item) => `${item.severity.toUpperCase()} ${item.ruleId} ${item.location?.path ?? ''}:${item.location?.line ?? 0} ${item.metadata?.preview ?? ''}`).join('\n') : 'No secrets detected.'}\n`;
+      process.stdout.write(rendered); return findings.some((item) => item.severity === 'high' || item.severity === 'critical') ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
+    }
+    if (options.command === 'compliance-token') {
+      if (config.compliance.authMode !== 'hmac') { console.error('Configuration error: compliance.authMode must be hmac to issue scoped tokens'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      const secret = process.env[config.compliance.hmacSecretEnv] ?? ''; if (!secret) { console.error(`Configuration error: ${config.compliance.hmacSecretEnv} is required`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      const identity = resolveComplianceIdentity(config, options); const token = issueComplianceToken(identity, secret, { issuer: config.compliance.tokenIssuer, audience: config.compliance.tokenAudience, ...(options.ttl ? { ttlSeconds: options.ttl } : {}) });
+      process.stdout.write(`${token}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'intelligence-sync') {
+      let serviceRoot = ''; if (options.service) { const services = await discoverServices(repository.root, config); const selected = services.find((item) => item.name === options.service || item.root === options.service); if (!selected) throw new Error(`Unknown service: ${options.service}`); serviceRoot = selected.root; }
+      const result = await syncOsvDatabase(repository.root, config, serviceRoot); await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'intelligence.synced', result, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined); process.stdout.write(`${JSON.stringify(result, null, 2)}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'intelligence-bundle') {
+      const bundle = await buildVulnerabilityBundle(repository.root, config.vulnerabilities.databaseFile, options.output!, { ...(options.key ? { privateKeyFile: options.key } : {}) });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'intelligence.bundle.created', { version: bundle.version, advisoryCount: bundle.database.advisories.length, output: options.output! }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined); process.stdout.write(`${JSON.stringify({ id:bundle.id, version:bundle.version, advisoryCount:bundle.database.advisories.length }, null, 2)}\n`); return EXIT_CODES.PASS;
+    }
+    if (options.command === 'enterprise-audit-verify') {
+      const result = await verifyAuditChain(repository.root, config.integrity.auditLogFile, config.integrity.evidenceSigningPublicKeyFile || undefined); process.stdout.write(`${result.ok ? 'PASS' : 'FAIL'} audit chain${result.invalidIndex === undefined ? '' : ` at event ${result.invalidIndex}`}\n`); return result.ok ? EXIT_CODES.PASS : EXIT_CODES.POLICY_FAILURE;
+    }
+
     if (options.command === 'config-sign') {
       const signature = await signFile(repository.root, configPath, options.key!, config.integrity.configSignatureFile);
-      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'config.signed', { file: configPath, fingerprint: signature.publicKeyFingerprint });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'config.signed', { file: configPath, fingerprint: signature.publicKeyFingerprint }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`${JSON.stringify(signature, null, 2)}\n`); return EXIT_CODES.PASS;
     }
     if (options.command === 'config-verify') {
@@ -348,7 +404,7 @@ async function main(): Promise<number> {
     }
     if (options.command === 'intelligence-import') {
       const result = await importVulnerabilityBundle(repository.root, options.bundle!, config.vulnerabilities.databaseFile, { requireSignature: config.offline.requireSignedIntelligenceBundles, ...(options.publicKey || config.offline.intelligencePublicKeyFile ? { publicKeyFile: options.publicKey ?? config.offline.intelligencePublicKeyFile } : {}) });
-      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'intelligence.imported', { id: result.id, version: result.version, advisoryCount: result.advisoryCount });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'intelligence.imported', { id: result.id, version: result.version, advisoryCount: result.advisoryCount }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`); return EXIT_CODES.PASS;
     }
     if (options.command === 'enterprise-diagnostics') {
@@ -359,26 +415,27 @@ async function main(): Promise<number> {
     }
     if (options.command === 'enterprise-backup') {
       const path = await createBackup(repository.root, ['.sentrycode/config.json', config.policy.directory, config.waivers.file, config.vulnerabilities.databaseFile, config.compliance.storeDirectory, config.integrity.auditLogFile], config.operations.backupDirectory);
-      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.created', { path });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.created', { path }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`Backup created: ${path}\n`); return EXIT_CODES.PASS;
     }
     if (options.command === 'enterprise-restore') {
       await restoreBackup(repository.root, options.backup!, { 'config.json': '.sentrycode/config.json', 'policies': config.policy.directory, 'waivers.json': config.waivers.file, 'vulnerability-db.json': config.vulnerabilities.databaseFile, 'compliance': config.compliance.storeDirectory, 'events.jsonl': config.integrity.auditLogFile });
-      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.restored', { path: options.backup! });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'backup.restored', { path: options.backup! }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`Backup restored: ${options.backup}\n`); return EXIT_CODES.PASS;
     }
     if (options.command === 'enterprise-retention') {
       const backups = await applyRetention(repository.root, config.operations.backupDirectory, config.operations.retentionDays);
       const evidence = await applyComplianceRetention(repository.root, config.compliance.storeDirectory, config.operations.retentionDays);
-      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'retention.applied', { backupEntriesRemoved: backups.length, evidenceEntriesRemoved: evidence.length });
+      await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'retention.applied', { backupEntriesRemoved: backups.length, evidenceEntriesRemoved: evidence.length }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`${JSON.stringify({ backupsRemoved: backups, evidenceEntriesRemoved: evidence }, null, 2)}\n`); return EXIT_CODES.PASS;
     }
 
     if (options.command === 'compliance-manifest' || options.command === 'compliance-health' || options.command === 'compliance-ready' || options.command === 'compliance-runs' || options.command === 'compliance-run' || options.command === 'compliance-serve') {
-      const service = new SentryCodeComplianceService(repository.root, config.compliance.storeDirectory);
+      const service = new SentryCodeComplianceService(repository.root, config.compliance.storeDirectory, { ...(config.integrity.evidenceSigningPrivateKeyFile ? { privateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {}), ...(config.integrity.evidenceSigningPublicKeyFile ? { publicKeyFile: config.integrity.evidenceSigningPublicKeyFile } : {}) });
       if (options.command === 'compliance-serve') {
-        const token = process.env[config.compliance.apiTokenEnv] ?? '';
-        const running = await startComplianceServer(service, { host: config.compliance.listenHost, port: config.compliance.listenPort, ...(token ? { token } : {}) });
+        const token = process.env[config.compliance.apiTokenEnv] ?? ''; const hmacSecret = process.env[config.compliance.hmacSecretEnv] ?? '';
+        if (config.compliance.authMode === 'hmac' && !hmacSecret) { console.error(`Configuration error: ${config.compliance.hmacSecretEnv} is required for HMAC Compliance API mode`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+        const running = await startComplianceServer(service, { host: config.compliance.listenHost, port: config.compliance.listenPort, ...(config.compliance.authMode === 'hmac' ? { hmac: { secret: hmacSecret, issuer: config.compliance.tokenIssuer, audience: config.compliance.tokenAudience } } : token ? { token } : {}) });
         process.stdout.write(`SentryCode Compliance API listening on ${running.host}:${running.port}\n`);
         await new Promise<void>(() => {});
         return EXIT_CODES.PASS;
@@ -430,7 +487,8 @@ async function main(): Promise<number> {
     }
 
     if (options.command === 'sbom') {
-      const snapshot = await discoverDependencies(repository.root);
+      let serviceRoot = ''; if (options.service) { const services = await discoverServices(repository.root, config); const selected = services.find((item) => item.name === options.service || item.root === options.service); if (!selected) throw new Error(`Unknown service: ${options.service}`); serviceRoot = selected.root; }
+      const snapshot = await discoverDependencies(repository.root, new Date().toISOString(), serviceRoot);
       const components = snapshot.components.filter((item) => config.dependencies.includeDev || !item.dev);
       const document = options.format === 'spdx' ? spdxSbom(repository, components, snapshot.generatedAt) : cyclonedxSbom(repository, components, snapshot.generatedAt);
       const rendered = `${JSON.stringify(document, null, 2)}\n`;
@@ -482,7 +540,7 @@ async function main(): Promise<number> {
     const report = await runScan({
       repository,
       config,
-      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new GitAssuranceScanner(), new ProvenanceScanner(), new AutomotiveScanner()],
+      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new ExternalSastScanner(), new GitAssuranceScanner(), new ProvenanceScanner(), new AutomotiveScanner()],
       execution,
       ...(options.service ? { service: options.service } : {})
     });

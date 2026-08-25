@@ -27,6 +27,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
     enabled: true,
     highEntropy: true,
     minEntropyLength: 24,
+    historyMaxCommits: 500,
     customPatterns: []
   },
   dependencies: {
@@ -48,21 +49,22 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   vulnerabilities: {
     enabled: true,
     databaseFile: '.sentrycode/vulnerability-db.json',
-    failOnKnownExploited: true
+    failOnKnownExploited: true,
+    osv: { enabled: true, endpoint: 'https://api.osv.dev', timeoutMs: 20000 }
   },
   sbom: {
     defaultFormat: 'cyclonedx'
   },
-  sast: { enabled: true, languages: ['javascript', 'typescript', 'python'] },
-  gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [] },
+  sast: { enabled: true, languages: ['javascript', 'typescript', 'python'], external: { enabled: false, command: '', args: [], sarifFile: '.sentrycode/external-sast.sarif', timeoutMs: 120000 } },
+  gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [], github: { enabled: false, tokenEnv: 'GITHUB_TOKEN', apiBaseUrl: 'https://api.github.com', requireProtectedBranch: true, minimumApprovals: 1, requireStatusChecks: true } },
   provenance: { enabled: true, artifactPaths: [], signingPrivateKeyFile: '', signingPublicKeyFile: '' },
   automotive: { enabled: false, importDirectory: '.sentrycode/automotive/findings', deviationsFile: '.sentrycode/automotive/deviations.json', acceptedStandards: ['misra-c', 'misra-cpp', 'autosar-cpp'], requireDeviationApproval: true, requireInputs: true, evidenceTargets: ['iso-sae-21434', 'unece-r155', 'unece-r156'] },
   ci: { enabled: true, provider: 'auto', annotations: true },
   monorepo: { enabled: true, serviceRoots: [], discoverWorkspaces: true },
   incremental: { enabled: true, baseRef: '', headRef: 'HEAD', cacheFile: '.sentrycode/cache/incremental.json', scannerTimeoutMs: 120000 },
-  compliance: { enabled: false, tenant: '', project: '', storeDirectory: '.sentrycode/compliance', endpoint: '', tokenEnv: 'SENTRYCODE_COMPLIANCE_TOKEN', timeoutMs: 15000, listenHost: '127.0.0.1', listenPort: 7786, apiTokenEnv: 'SENTRYCODE_PLUGIN_API_TOKEN' },
+  compliance: { enabled: false, tenant: '', project: '', storeDirectory: '.sentrycode/compliance', endpoint: '', tokenEnv: 'SENTRYCODE_COMPLIANCE_TOKEN', timeoutMs: 15000, listenHost: '127.0.0.1', listenPort: 7786, apiTokenEnv: 'SENTRYCODE_PLUGIN_API_TOKEN', authMode: 'static', hmacSecretEnv: 'SENTRYCODE_PLUGIN_HMAC_SECRET', tokenIssuer: 'quilons-compliance', tokenAudience: 'quilons.sentrycode' },
   offline: { enabled: false, requireSignedIntelligenceBundles: false, intelligencePublicKeyFile: '' },
-  integrity: { requireSignedConfig: false, configSignatureFile: '.sentrycode/config.sig.json', publicKeyFile: '', auditLogFile: '.sentrycode/audit/events.jsonl', evidenceManifests: true },
+  integrity: { requireSignedConfig: false, configSignatureFile: '.sentrycode/config.sig.json', publicKeyFile: '', auditLogFile: '.sentrycode/audit/events.jsonl', evidenceManifests: true, evidenceSigningPrivateKeyFile: '', evidenceSigningPublicKeyFile: '' },
   operations: { backupDirectory: '.sentrycode/backups', retentionDays: 365 },
   policy: {
     failOn: ['high', 'critical'],

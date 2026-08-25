@@ -19,7 +19,8 @@
     "enabled": true,
     "highEntropy": true,
     "minEntropyLength": 24,
-    "customPatterns": []
+    "customPatterns": [],
+    "historyMaxCommits": 500
   },
   "dependencies": {
     "enabled": true,
@@ -52,7 +53,12 @@
   "vulnerabilities": {
     "enabled": true,
     "databaseFile": ".sentrycode/vulnerability-db.json",
-    "failOnKnownExploited": true
+    "failOnKnownExploited": true,
+    "osv": {
+      "enabled": true,
+      "endpoint": "https://api.osv.dev",
+      "timeoutMs": 20000
+    }
   },
   "sbom": {
     "defaultFormat": "cyclonedx"
@@ -103,13 +109,28 @@
       "javascript",
       "typescript",
       "python"
-    ]
+    ],
+    "external": {
+      "enabled": false,
+      "command": "",
+      "args": [],
+      "sarifFile": ".sentrycode/external-sast.sarif",
+      "timeoutMs": 120000
+    }
   },
   "gitAssurance": {
     "enabled": true,
     "requireCleanTree": false,
     "requireSignedCommit": false,
-    "allowedEmailDomains": []
+    "allowedEmailDomains": [],
+    "github": {
+      "enabled": false,
+      "tokenEnv": "GITHUB_TOKEN",
+      "apiBaseUrl": "https://api.github.com",
+      "requireProtectedBranch": true,
+      "minimumApprovals": 1,
+      "requireStatusChecks": true
+    }
   },
   "provenance": {
     "enabled": true,
@@ -144,7 +165,11 @@
     "timeoutMs": 15000,
     "listenHost": "127.0.0.1",
     "listenPort": 7786,
-    "apiTokenEnv": "SENTRYCODE_PLUGIN_API_TOKEN"
+    "apiTokenEnv": "SENTRYCODE_PLUGIN_API_TOKEN",
+    "authMode": "static",
+    "hmacSecretEnv": "SENTRYCODE_PLUGIN_HMAC_SECRET",
+    "tokenIssuer": "quilons-compliance",
+    "tokenAudience": "quilons.sentrycode"
   },
   "offline": {
     "enabled": true,
@@ -156,7 +181,9 @@
     "configSignatureFile": ".sentrycode/config.sig.json",
     "publicKeyFile": "",
     "auditLogFile": ".sentrycode/audit/events.jsonl",
-    "evidenceManifests": true
+    "evidenceManifests": true,
+    "evidenceSigningPrivateKeyFile": "",
+    "evidenceSigningPublicKeyFile": ""
   },
   "operations": {
     "backupDirectory": ".sentrycode/backups",

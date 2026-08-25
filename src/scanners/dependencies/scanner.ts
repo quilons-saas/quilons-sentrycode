@@ -4,6 +4,8 @@ import { satisfiesSimpleRange } from '../../dependencies/versions.js';
 import { cyclonedxSbom } from '../../sbom/generate.js';
 import { loadVulnerabilityDatabase, vulnerabilitiesFor } from '../../vulnerabilities/database.js';
 import { stableId } from '../../utils/hash.js';
+import { discoverServices } from '../../monorepo/discover.js';
+import { enrichDependencyMetadata } from '../../dependencies/metadata.js';
 
 function finding(args: { type: string; ruleId: string; title: string; description: string; severity: Severity; component: DependencyComponent; detectedAt: string; remediation?: string; metadata?: Record<string, string | number | boolean | null> }): Finding {
   const fingerprint = stableId('fp', `${args.ruleId}|${args.component.ecosystem}|${args.component.name}|${args.component.version}`);
@@ -32,8 +34,17 @@ export class DependencyScanner implements ScannerPlugin {
     const started = performance.now();
     const detectedAt = context.now().toISOString();
     if (!context.config.dependencies.enabled) return { scanner: this.id, findings: [], evidence: [], durationMs: Math.round(performance.now() - started), status: 'skipped', error: 'scanner disabled by configuration' };
-    const snapshot = await discoverDependencies(context.repository.root, detectedAt);
-    const components = snapshot.components.filter((item) => context.config.dependencies.includeDev || !item.dev);
+    let serviceRoot = '';
+    const requestedService = context.execution?.service ?? context.config.policy.context.service;
+    if (requestedService) {
+      const services = await discoverServices(context.repository.root, context.config);
+      const selected = services.find((item) => item.name === requestedService || item.root === requestedService);
+      if (!selected) throw new Error(`Unknown service for dependency scan: ${requestedService}`);
+      serviceRoot = selected.root;
+    }
+    const snapshot = await discoverDependencies(context.repository.root, detectedAt, serviceRoot);
+    const enriched = await enrichDependencyMetadata(context.repository.root, snapshot.components, { serviceRoot, offline: context.config.offline.enabled });
+    const components = enriched.filter((item) => context.config.dependencies.includeDev || !item.dev);
     const findings: Finding[] = [];
 
     for (const component of components) {
@@ -80,7 +91,7 @@ export class DependencyScanner implements ScannerPlugin {
     }
 
     const unique = [...new Map(findings.map((item) => [item.fingerprint, item])).values()];
-    const baseMetadata = { scannerVersion: this.version, componentCount: components.length, npmComponents: components.filter((item) => item.ecosystem === 'npm').length, pypiComponents: components.filter((item) => item.ecosystem === 'pypi').length };
+    const baseMetadata = { scannerVersion: this.version, serviceRoot: serviceRoot || '.', componentCount: components.length, npmComponents: components.filter((item) => item.ecosystem === 'npm').length, pypiComponents: components.filter((item) => item.ecosystem === 'pypi').length };
     const ids = (type: string) => unique.filter((item) => item.type === type).map((item) => item.id);
     const evidence = [
       { schemaVersion: SCHEMA_VERSION, id: stableId('evidence', `${context.repository.commitSha}|sbom|${detectedAt}`), type: 'sbom.generated', scanner: this.id, repository: context.repository.repository, commitSha: context.repository.commitSha, branch: context.repository.branch, generatedAt: detectedAt, findingIds: [], metadata: { ...baseMetadata, format: 'CycloneDX 1.5', componentCount: components.length, bomBytes: JSON.stringify(cyclonedxSbom(context.repository, components, detectedAt)).length } },
