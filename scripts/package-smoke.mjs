@@ -45,6 +45,9 @@ try {
     ? join(temp, 'node_modules', '.bin', 'sentrycode.cmd')
     : join(temp, 'node_modules', '.bin', 'sentrycode');
   await access(shim);
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'ui', 'index.html'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'migrations', '001_application_state.sql'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'deploy', 'docker-compose.postgres.yml'));
 
   const installedCli = join(temp, 'node_modules', '@quilons', 'sentrycode', 'dist', 'cli', 'main.js');
   const result = await execFileAsync(process.execPath, [installedCli, '--help'], {

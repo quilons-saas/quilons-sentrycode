@@ -320,3 +320,25 @@ sentrycode serve . --host 127.0.0.1 --port 7787
 Use `sentrycode ui . --no-open` for headless/local use. Non-loopback binding requires `SENTRYCODE_UI_TOKEN`; API requests must use that bearer token. The first UI slice is intentionally read-only and derives runs/findings from SentryCode's integrity-verified local Compliance/evidence store. Configure `compliance.tenant` and `compliance.project` (or corresponding policy context values) to select the local run scope.
 
 The authoritative standalone UI requirements are in `docs/requirements/QUILONS_SentryCode_Standalone_Web_UI_Requirements_v0.1.pdf`.
+
+
+## Standalone Web UI administration and PostgreSQL
+
+The standalone engineering console can run read-only without a database. Durable administration is enabled by PostgreSQL through `SENTRYCODE_DATABASE_URL`. PostgreSQL is an open-source, separate deployment unit; it is not embedded inside the SentryCode runtime.
+
+```powershell
+$env:SENTRYCODE_POSTGRES_PASSWORD = "use-a-long-random-password"
+docker compose -f deploy/docker-compose.postgres.yml up -d
+$env:SENTRYCODE_DATABASE_URL = "postgresql://sentrycode:$env:SENTRYCODE_POSTGRES_PASSWORD@127.0.0.1:54327/sentrycode"
+node .\dist\cli\main.js database migrate
+node .\dist\cli\main.js database status
+```
+
+For local-admin Web UI writes, set a separate browser-session credential before launching the UI:
+
+```powershell
+$env:SENTRYCODE_UI_ADMIN_TOKEN = "use-a-different-long-random-token"
+node .\dist\cli\main.js ui --no-open
+```
+
+PostgreSQL stores repository registrations, UI-managed scanner settings, policy assignments, waiver workflow state, principal/RBAC foundation, integration metadata and application audit indexes. SentryCode's signed/tamper-evident evidence store remains the authoritative evidence source. UI-managed repository policy, scanner and active waiver changes are materialized into the registered repository's existing `.sentrycode` contracts so later CLI/CI scans consume the same effective configuration. Signed configuration enforcement blocks such materialization rather than silently modifying signed files.

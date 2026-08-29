@@ -46,6 +46,7 @@ import { installGitHooks } from '../git/hooks.js';
 import { scanHistorySecrets, scanStagedSecrets } from '../git/secrets.js';
 import { issueComplianceToken } from '../compliance/auth.js';
 import { startWebServer } from '../web/server.js';
+import { createApplicationStateStore } from '../application/factory.js';
 import { openBrowser } from '../web/open-browser.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
@@ -59,9 +60,10 @@ interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; at
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
 interface WebOptions extends CommonOptions { command: 'ui' | 'serve'; format: 'console'; }
+interface DatabaseOptions extends CommonOptions { command: 'database-migrate' | 'database-status'; format: 'console' | 'json'; }
 interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'enterprise-audit-verify' | 'intelligence-import' | 'intelligence-sync' | 'intelligence-bundle' | 'config-sign' | 'config-verify' | 'hooks-install' | 'secrets-staged' | 'secrets-history' | 'compliance-token'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; ttl?: number; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | WebOptions | EnterpriseOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | WebOptions | DatabaseOptions | EnterpriseOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
@@ -77,8 +79,10 @@ Usage:
   sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
   sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
   sentrycode services [path] [--format console|json]
-  sentrycode ui [path] [--host HOST] [--port PORT] [--no-open]
-  sentrycode serve [path] [--host HOST] [--port PORT]
+  sentrycode ui [path] [--tenant ID] [--project ID] [--host HOST] [--port PORT] [--no-open]
+  sentrycode serve [path] [--tenant ID] [--project ID] [--host HOST] [--port PORT]
+  sentrycode database migrate [path]
+  sentrycode database status [path] [--format console|json]
   sentrycode compliance manifest [path] [--format console|json]
   sentrycode compliance health [path] [--format console|json]
   sentrycode compliance ready [path] [--format console|json]
@@ -114,6 +118,8 @@ Commands:
   services           Discover monorepo services/packages.
   ui                 Launch the standalone SentryCode Web UI and API.
   serve              Serve the standalone Web UI/API without opening a browser.
+  database migrate   Apply PostgreSQL application-state migrations.
+  database status    Report PostgreSQL application-state connectivity/schema status.
   compliance manifest Expose the versioned QUILONS Compliance plugin manifest.
   compliance health   Lightweight plugin health probe.
   compliance ready    Installer/platform readiness probe.
@@ -159,6 +165,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'attest') { command = 'provenance-attest'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'verify') { command = 'provenance-verify'; offset = 2; }
+  else if (argv[0] === 'database' && argv[1] === 'migrate') { command = 'database-migrate'; offset = 2; }
+  else if (argv[0] === 'database' && argv[1] === 'status') { command = 'database-status'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'manifest') { command = 'compliance-manifest'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'health') { command = 'compliance-health'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'ready') { command = 'compliance-ready'; offset = 2; }
@@ -246,6 +254,10 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
 
   const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}), ...(host ? { host } : {}), ...(port !== undefined ? { port } : {}), ...(noOpen ? { noOpen: true } : {}) };
   if (command === 'ui' || command === 'serve') return { command, ...common, format: 'console' };
+  if (command === 'database-migrate' || command === 'database-status') {
+    if (scanFormat === 'sarif') throw new Error('database commands do not support SARIF format');
+    return { command, ...common, format: scanFormat as 'console' | 'json' };
+  }
     if (command.startsWith('compliance-') && command !== 'compliance-token') {
     if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
     if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
@@ -382,17 +394,33 @@ async function main(): Promise<number> {
     }
 
     if (options.command === 'ui' || options.command === 'serve') {
-      const configuredTenant = config.compliance.tenant || config.policy.context.tenant || '';
-      const configuredProject = config.compliance.project || config.policy.context.project || '';
+      const configuredTenant = options.tenant || config.compliance.tenant || config.policy.context.tenant || '';
+      const configuredProject = options.project || config.compliance.project || config.policy.context.project || '';
       const identity = configuredTenant && configuredProject ? complianceIdentity(configuredTenant, configuredProject) : null;
       const host = options.host ?? '127.0.0.1';
       const port = options.port ?? 7787;
       const token = process.env.SENTRYCODE_UI_TOKEN ?? '';
-      const running = await startWebServer(repository.root, config, identity, { host, port, ...(token ? { token } : {}) });
+      const adminToken = process.env.SENTRYCODE_UI_ADMIN_TOKEN ?? '';
+      const running = await startWebServer(repository.root, config, identity, { host, port, ...(token ? { token } : {}), ...(adminToken ? { adminToken } : {}) });
       process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
       if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
       await new Promise<void>(() => {});
       return EXIT_CODES.PASS;
+    }
+
+    if (options.command === 'database-migrate' || options.command === 'database-status') {
+      const store = await createApplicationStateStore();
+      try {
+        if (options.command === 'database-migrate') {
+          const version = await store.migrate();
+          process.stdout.write(`SentryCode PostgreSQL schema migrated to version ${version}\n`);
+          return EXIT_CODES.PASS;
+        }
+        const status = await store.status();
+        const rendered = options.format === 'json' ? `${JSON.stringify(status, null, 2)}\n` : `${status.connected ? 'PASS' : 'FAIL'} PostgreSQL application state: ${status.detail}${status.schemaVersion === null ? '' : ` (schema ${status.schemaVersion})`}\n`;
+        process.stdout.write(rendered);
+        return status.connected ? EXIT_CODES.PASS : EXIT_CODES.RUNTIME_FAILURE;
+      } finally { await store.close(); }
     }
 
     if (options.command === 'hooks-install') {
