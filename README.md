@@ -342,3 +342,14 @@ node .\dist\cli\main.js ui --no-open
 ```
 
 PostgreSQL stores repository registrations, UI-managed scanner settings, policy assignments, waiver workflow state, principal/RBAC foundation, integration metadata and application audit indexes. SentryCode's signed/tamper-evident evidence store remains the authoritative evidence source. UI-managed repository policy, scanner and active waiver changes are materialized into the registered repository's existing `.sentrycode` contracts so later CLI/CI scans consume the same effective configuration. Signed configuration enforcement blocks such materialization rather than silently modifying signed files.
+
+
+## Standalone server deployment
+
+SentryCode can run as a standalone Web UI/API server with PostgreSQL in a separate container. The production deployment is defined in `deploy/docker-compose.yml` and uses the root `Dockerfile`.
+
+See `docs/on-prem/DOCKER_DEPLOYMENT.md`.
+
+The server supports local token authentication and optional enterprise OIDC. SentryCode authorization is server-enforced with viewer, engineer, security-admin and administrator roles. OIDC identities must be registered in SentryCode before they receive permissions.
+
+The standalone UI also exposes enterprise diagnostics, automotive evidence status, integration metadata, vulnerability-intelligence status and governed operational actions. PostgreSQL is application-state storage; signed SentryCode evidence remains the evidence authority.

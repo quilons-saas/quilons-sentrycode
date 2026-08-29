@@ -5,7 +5,7 @@ import type { SentryCodeConfig } from '../core/types.js';
 import { stableId } from '../utils/hash.js';
 import { appendAuditEvent } from '../enterprise/audit.js';
 import type { ApplicationStateStore } from './store.js';
-import type { IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
+import type { AdminRole, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
 
 const allowedScanners = new Set(['secrets','dependencies','sast','git-assurance','provenance','automotive']);
 const severities = new Set(['info','low','medium','high','critical']);
@@ -27,6 +27,19 @@ export class SentryCodeAdminService {
   async integrations(){ const s=this.scope(); return this.store.listIntegrations(s.tenant,s.project); }
   async setIntegration(input:any,actor:string){ const s=this.scope(); const kind=String(input.kind??'').trim(); const name=String(input.name??kind).trim(); if(!kind||!name) throw new Error('integration kind and name are required'); const value:Omit<IntegrationRecord,'updatedAt'|'updatedBy'>={id:stableId('integration',`${s.tenant}|${s.project}|${kind}|${name}`),tenant:s.tenant,project:s.project,kind,name,enabled:input.enabled!==false,configuration:(input.configuration&&typeof input.configuration==='object')?input.configuration:{},secretReference:input.secretReference?String(input.secretReference):null,status:input.status??'configured'}; const saved=await this.store.upsertIntegration(value,actor); await this.governedAudit('ui.integration.upsert',{integrationId:saved.id,kind:saved.kind,enabled:saved.enabled},actor); return saved; }
   async audit(){ return this.store.listAudit(); }
+  async principals(){ return this.store.listPrincipals(); }
+  async setPrincipal(input:any,actor:string){
+    const subject=String(input.subject??'').trim(); const displayName=String(input.displayName??subject).trim();
+    const role=String(input.role??'viewer') as AdminRole;
+    if(!subject||!displayName) throw new Error('principal subject and displayName are required');
+    if(!['viewer','engineer','security_admin','administrator'].includes(role)) throw new Error('invalid principal role');
+    const existing=(await this.store.listPrincipals()).find(x=>x.subject===subject);
+    const now=new Date().toISOString();
+    const value:PrincipalRecord={id:existing?.id??stableId('principal',subject),subject,displayName,role,enabled:input.enabled!==false,createdAt:existing?.createdAt??now,updatedAt:now};
+    const saved=await this.store.upsertPrincipal(value);
+    await this.governedAudit('ui.principal.upsert',{principalId:saved.id,role:saved.role,enabled:saved.enabled},actor);
+    return saved;
+  }
   async materializePolicy(repository:RegisteredRepository, policy:ManagedPolicyAssignment){ if(this.config.integrity.requireSignedConfig) throw new Error('SIGNED_CONFIG_WRITE_BLOCKED'); const safe=policy.id.replace(/[^A-Za-z0-9._-]/g,'_'); const path=resolve(repository.rootPath,`.sentrycode/policies/80-ui-managed-${safe}.json`); await mkdir(dirname(path),{recursive:true}); const level=policy.service?'service':policy.repositoryId?'repository':'project'; const scope:any={tenant:policy.tenant,project:policy.project,repository:repository.name}; if(policy.service)scope.service=policy.service; const doc={schemaVersion:1,id:policy.id,version:String(policy.version),level,scope,description:'Managed by SentryCode Web UI',enforcement:{failOn:policy.failOn,warnOn:policy.warnOn,requiredScanners:policy.requiredScanners,scannerFailureModes:policy.scannerFailureModes},lock:policy.lockedFields}; await writeFile(path,`${JSON.stringify(doc,null,2)}\n`,'utf8'); return path; }
   async materializeWaivers(repository:RegisteredRepository, all:WaiverWorkflowRecord[]){ if(this.config.integrity.requireSignedConfig) throw new Error('SIGNED_CONFIG_WRITE_BLOCKED'); const path=resolve(repository.rootPath,this.config.waivers.file); let existing:any[]=[]; try{const v=JSON.parse(await readFile(path,'utf8')); if(Array.isArray(v))existing=v;}catch{} const managedIds=new Set(all.map(x=>x.id)); const preserved=existing.filter(x=>!x||typeof x!=='object'||!managedIds.has(String(x.id??''))); const active=all.filter(x=>x.status==='active').map(x=>({id:x.id,reason:x.reason,expiresAt:x.expiresAt,...(x.fingerprint?{fingerprint:x.fingerprint}:{}),...(x.ruleId?{ruleId:x.ruleId}:{}),...(x.path?{path:x.path}:{}),...(x.scanner?{scanner:x.scanner}:{}),repository:repository.name,...(x.ticket?{ticket:x.ticket}:{}),createdAt:x.createdAt,author:x.author,...(x.approver?{approver:x.approver,approvedAt:x.decidedAt}: {})})); await mkdir(dirname(path),{recursive:true}); await writeFile(path,`${JSON.stringify([...preserved,...active],null,2)}\n`,'utf8'); return path; }
   async materializeScannerConfig(repository:RegisteredRepository, settings:ManagedScannerSetting[]){ if(this.config.integrity.requireSignedConfig) throw new Error('SIGNED_CONFIG_WRITE_BLOCKED'); const path=resolve(repository.rootPath,'.sentrycode/config.json'); let raw:any={schemaVersion:1}; try{raw=JSON.parse(await readFile(path,'utf8'));}catch{}; for(const s of settings){ if(s.scanner==='secrets') raw.secrets={...(raw.secrets??{}),enabled:s.enabled}; if(s.scanner==='dependencies') raw.dependencies={...(raw.dependencies??{}),enabled:s.enabled}; if(s.scanner==='sast') raw.sast={...(raw.sast??{}),enabled:s.enabled}; if(s.scanner==='git-assurance') raw.gitAssurance={...(raw.gitAssurance??{}),enabled:s.enabled}; if(s.scanner==='provenance') raw.provenance={...(raw.provenance??{}),enabled:s.enabled}; if(s.scanner==='automotive') raw.automotive={...(raw.automotive??{}),enabled:s.enabled}; }

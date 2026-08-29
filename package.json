@@ -16,7 +16,8 @@
     "docs",
     "ui",
     "migrations",
-    "deploy"
+    "deploy",
+    "Dockerfile"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

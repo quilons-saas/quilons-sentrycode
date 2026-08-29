@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import { startWebServer } from '../src/web/server.js';
+import { DisabledApplicationStateStore } from '../src/application/store.js';
 
 test('standalone web server serves UI assets and status API', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sentrycode-web-server-'));
@@ -39,9 +40,9 @@ test('standalone administration writes require a separate admin token', async ()
   const root = await mkdtemp(join(tmpdir(), 'sentrycode-web-admin-'));
   const assets = join(root,'assets'); await mkdir(assets); await writeFile(join(root,'package.json'),'{}'); await writeFile(join(assets,'index.html'),'<html></html>');
   const identity={tenant:'acme',project:'payments'};
-  const noToken = await startWebServer(root, structuredClone(DEFAULT_CONFIG), identity, { host:'127.0.0.1',port:0,assetRoot:assets });
+  const noToken = await startWebServer(root, structuredClone(DEFAULT_CONFIG), identity, { host:'127.0.0.1',port:0,assetRoot:assets,applicationStore:new DisabledApplicationStateStore() });
   try { const r=await fetch(`${noToken.url}/api/v1/admin/repositories`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'}); assert.equal(r.status,503); } finally { noToken.server.close(); }
-  const protectedServer = await startWebServer(root, structuredClone(DEFAULT_CONFIG), identity, { host:'127.0.0.1',port:0,assetRoot:assets,adminToken:'correct' });
+  const protectedServer = await startWebServer(root, structuredClone(DEFAULT_CONFIG), identity, { host:'127.0.0.1',port:0,assetRoot:assets,adminToken:'correct',applicationStore:new DisabledApplicationStateStore() });
   try {
     const rejectedSession=await fetch(`${protectedServer.url}/api/v1/admin/session`,{method:'POST',headers:{authorization:'Bearer wrong','x-sentrycode-actor':'tester'}}); assert.equal(rejectedSession.status,401);
     const acceptedSession=await fetch(`${protectedServer.url}/api/v1/admin/session`,{method:'POST',headers:{authorization:'Bearer correct','x-sentrycode-actor':'tester'}}); assert.equal(acceptedSession.status,200);

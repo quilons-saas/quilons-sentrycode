@@ -404,7 +404,16 @@ async function main(): Promise<number> {
       const running = await startWebServer(repository.root, config, identity, { host, port, ...(token ? { token } : {}), ...(adminToken ? { adminToken } : {}) });
       process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
       if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
-      await new Promise<void>(() => {});
+      await new Promise<void>((resolveShutdown) => {
+        let closing = false;
+        const shutdown = () => {
+          if (closing) return;
+          closing = true;
+          running.server.close(() => resolveShutdown());
+        };
+        process.once('SIGTERM', shutdown);
+        process.once('SIGINT', shutdown);
+      });
       return EXIT_CODES.PASS;
     }
 
