@@ -45,8 +45,10 @@ import { runDiagnostics } from '../enterprise/diagnostics.js';
 import { installGitHooks } from '../git/hooks.js';
 import { scanHistorySecrets, scanStagedSecrets } from '../git/secrets.js';
 import { issueComplianceToken } from '../compliance/auth.js';
+import { startWebServer } from '../web/server.js';
+import { openBrowser } from '../web/open-browser.js';
 
-interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; }
+interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
 interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
 interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
@@ -56,9 +58,10 @@ interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
+interface WebOptions extends CommonOptions { command: 'ui' | 'serve'; format: 'console'; }
 interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'enterprise-audit-verify' | 'intelligence-import' | 'intelligence-sync' | 'intelligence-bundle' | 'config-sign' | 'config-verify' | 'hooks-install' | 'secrets-staged' | 'secrets-history' | 'compliance-token'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; ttl?: number; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | EnterpriseOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | WebOptions | EnterpriseOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
@@ -74,6 +77,8 @@ Usage:
   sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
   sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
   sentrycode services [path] [--format console|json]
+  sentrycode ui [path] [--host HOST] [--port PORT] [--no-open]
+  sentrycode serve [path] [--host HOST] [--port PORT]
   sentrycode compliance manifest [path] [--format console|json]
   sentrycode compliance health [path] [--format console|json]
   sentrycode compliance ready [path] [--format console|json]
@@ -107,6 +112,8 @@ Commands:
   provenance attest  Generate in-toto/SLSA-shaped provenance and optional signature.
   provenance verify  Verify a signed provenance attestation.
   services           Discover monorepo services/packages.
+  ui                 Launch the standalone SentryCode Web UI and API.
+  serve              Serve the standalone Web UI/API without opening a browser.
   compliance manifest Expose the versioned QUILONS Compliance plugin manifest.
   compliance health   Lightweight plugin health probe.
   compliance ready    Installer/platform readiness probe.
@@ -173,7 +180,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'enterprise' && argv[1] === 'audit' && argv[2] === 'verify') { command = 'enterprise-audit-verify'; offset = 3; }
   else if (argv[0] === 'config' && argv[1] === 'sign') { command = 'config-sign'; offset = 2; }
   else if (argv[0] === 'config' && argv[1] === 'verify') { command = 'config-verify'; offset = 2; }
-  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
+  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services' || argv[0] === 'ui' || argv[0] === 'serve') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
   let path = process.cwd();
@@ -194,6 +201,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let tenant: string | undefined;
   let project: string | undefined;
   let runId: string | undefined;
+  let host: string | undefined;
+  let port: number | undefined;
+  let noOpen = false;
   let bundle: string | undefined;
   let backup: string | undefined;
   let ttl: number | undefined;
@@ -210,6 +220,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--tenant') { tenant = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--project') { project = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--run-id') { runId = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--host') { host = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--port') { const value = Number(requireValue(argv, i, arg)); i += 1; if (!Number.isInteger(value) || value < 0 || value > 65535) throw new Error('--port must be an integer from 0 to 65535'); port = value; }
+    else if (arg === '--no-open') { noOpen = true; }
     else if (arg === '--bundle') { bundle = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--backup') { backup = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--ttl') { const raw = Number(requireValue(argv, i, arg)); if (!Number.isFinite(raw) || raw <= 0) throw new Error('--ttl requires a positive number'); ttl = Math.floor(raw); i += 1; }
@@ -231,8 +244,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else throw new Error(`Unexpected argument: ${arg}`);
   }
 
-  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}) };
-  if (command.startsWith('compliance-') && command !== 'compliance-token') {
+  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}), ...(host ? { host } : {}), ...(port !== undefined ? { port } : {}), ...(noOpen ? { noOpen: true } : {}) };
+  if (command === 'ui' || command === 'serve') return { command, ...common, format: 'console' };
+    if (command.startsWith('compliance-') && command !== 'compliance-token') {
     if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
     if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
     return { command: command as ComplianceOptions['command'], ...common, format: scanFormat as 'console' | 'json' };
@@ -365,6 +379,20 @@ async function main(): Promise<number> {
       if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
       const ok = await verifyFile(repository.root, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
       if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+    }
+
+    if (options.command === 'ui' || options.command === 'serve') {
+      const configuredTenant = config.compliance.tenant || config.policy.context.tenant || '';
+      const configuredProject = config.compliance.project || config.policy.context.project || '';
+      const identity = configuredTenant && configuredProject ? complianceIdentity(configuredTenant, configuredProject) : null;
+      const host = options.host ?? '127.0.0.1';
+      const port = options.port ?? 7787;
+      const token = process.env.SENTRYCODE_UI_TOKEN ?? '';
+      const running = await startWebServer(repository.root, config, identity, { host, port, ...(token ? { token } : {}) });
+      process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
+      if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
+      await new Promise<void>(() => {});
+      return EXIT_CODES.PASS;
     }
 
     if (options.command === 'hooks-install') {

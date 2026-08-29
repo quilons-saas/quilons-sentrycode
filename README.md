@@ -300,3 +300,23 @@ sentrycode enterprise audit verify .
 ### GitHub governance
 
 When `gitAssurance.github.enabled` is true, SentryCode queries GitHub branch protection using the configured token environment variable and can enforce protected branches, minimum approving reviews and required status checks. Provider API state is normalized through the existing Git governance boundary.
+
+## Standalone Web UI
+
+SentryCode includes a lightweight standalone operational console for engineering and security users. It does not require QUILONS Compliance.
+
+Launch locally and open the browser automatically:
+
+```bash
+sentrycode ui .
+```
+
+Serve without opening a browser:
+
+```bash
+sentrycode serve . --host 127.0.0.1 --port 7787
+```
+
+Use `sentrycode ui . --no-open` for headless/local use. Non-loopback binding requires `SENTRYCODE_UI_TOKEN`; API requests must use that bearer token. The first UI slice is intentionally read-only and derives runs/findings from SentryCode's integrity-verified local Compliance/evidence store. Configure `compliance.tenant` and `compliance.project` (or corresponding policy context values) to select the local run scope.
+
+The authoritative standalone UI requirements are in `docs/requirements/QUILONS_SentryCode_Standalone_Web_UI_Requirements_v0.1.pdf`.
