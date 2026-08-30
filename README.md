@@ -106,6 +106,11 @@ See `.sentrycode/examples/release.rego`.
 - npm `package-lock.json`
 - pinned Python `requirements.txt`
 - pinned PEP 621 `pyproject.toml`
+- Java Maven `pom.xml`
+- Java Gradle `build.gradle`, `build.gradle.kts`, and resolved `gradle.lockfile`
+- .NET/C# `.csproj`, NuGet `packages.lock.json`, and resolved `obj/project.assets.json`
+- package URLs and OSV synchronization for npm, PyPI, Maven, and NuGet
+- local Maven/NuGet cache license enrichment when package metadata is available
 - CycloneDX 1.5
 - SPDX 2.3
 - Git-ref dependency diffing
@@ -138,7 +143,7 @@ The release gate is based on the same normalized findings, evidence and effectiv
 
 SentryCode now includes native security-analysis and provenance capabilities in the standard scan pipeline:
 
-- TypeScript/JavaScript and Python SAST rules for high-risk constructs such as dynamic `eval`, shell execution, unsafe pickle deserialization, and security-sensitive weak randomness.
+- Native TypeScript/JavaScript, Python, Java, and C# SAST rules for high-risk constructs such as dynamic `eval`, shell/process execution, unsafe deserialization, SQL string construction, and weak cryptographic digests.
 - Git assurance evidence for commit author identity, commit signature state, clean-working-tree policy, and configurable author email domains.
 - A Git-provider governance adapter boundary for future branch-protection/review checks without coupling core to GitHub/GitLab/Azure DevOps.
 - `build.attestation` and `provenance.attestation` evidence generated from repository/build context.
