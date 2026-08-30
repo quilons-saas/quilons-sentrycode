@@ -16,5 +16,6 @@ test('generates CycloneDX 1.5 SBOM', () => {
 test('generates SPDX 2.3 SBOM', () => {
   const bom = spdxSbom(repository, components, '2026-08-25T00:00:00Z') as { spdxVersion: string; packages: unknown[] };
   assert.equal(bom.spdxVersion, 'SPDX-2.3');
-  assert.equal(bom.packages.length, 1);
+  assert.equal(bom.packages.length, 2);
+  assert.equal((bom.packages[0] as { SPDXID: string }).SPDXID, 'SPDXRef-RootPackage');
 });

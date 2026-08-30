@@ -145,6 +145,9 @@ export interface DependencyComponent {
   license?: string;
   purl: string;
   packagePath?: string;
+  hashes?: Array<{ algorithm: 'SHA-256' | 'SHA-512'; value: string }>;
+  dependencies?: string[];
+  replacedFrom?: string;
 }
 
 export interface DependencySnapshot {
@@ -256,9 +259,17 @@ export interface SentryCodeConfig {
     enabled: boolean;
     includeDev: boolean;
     allowedRegistries: string[];
+    deniedRegistries: string[];
     deniedPackages: string[];
     allowedPackages: string[];
     versionRestrictions: Record<string, string>;
+    maintenance: {
+      enabled: boolean;
+      metadataFile: string;
+      maxReleaseAgeDays: number;
+      denyDeprecated: boolean;
+      requireMetadata: boolean;
+    };
   };
   licenses: {
     enabled: boolean;

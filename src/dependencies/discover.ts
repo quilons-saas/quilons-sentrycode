@@ -3,8 +3,19 @@ import { basename, join, resolve } from 'node:path';
 import type { DependencyComponent, DependencySnapshot } from '../core/types.js';
 
 interface PackageLock {
-  packages?: Record<string, { name?: string; version?: string; dev?: boolean; resolved?: string; license?: string }>;
-  dependencies?: Record<string, { version?: string; dev?: boolean; resolved?: string }>;
+  packages?: Record<string, { name?: string; version?: string; dev?: boolean; resolved?: string; license?: string; integrity?: string; dependencies?: Record<string,string> }>;
+  dependencies?: Record<string, { version?: string; dev?: boolean; resolved?: string; integrity?: string; requires?: Record<string,string> }>;
+}
+
+function sriHashes(integrity: string | undefined): DependencyComponent['hashes'] {
+  if (!integrity) return undefined;
+  const hashes: NonNullable<DependencyComponent['hashes']> = [];
+  for (const token of integrity.trim().split(/\s+/)) {
+    const match = token.match(/^(sha256|sha512)-(.+)$/i);
+    if (!match) continue;
+    try { hashes.push({ algorithm: match[1]!.toLowerCase() === 'sha256' ? 'SHA-256' : 'SHA-512', value: Buffer.from(match[2]!, 'base64').toString('hex') }); } catch {}
+  }
+  return hashes.length ? hashes : undefined;
 }
 
 function npmPurl(name: string, version: string): string {
@@ -45,15 +56,31 @@ function parsePackageLock(content: string): DependencyComponent[] {
   const lock = JSON.parse(content) as PackageLock;
   const components: DependencyComponent[] = [];
   if (lock.packages) {
+    const byPath = new Map<string, { name:string; version:string; purl:string }>();
     for (const [packagePath, entry] of Object.entries(lock.packages)) {
       if (!packagePath || !entry.version) continue;
       const pathName = packagePath.split('node_modules/').at(-1);
       const name = entry.name ?? pathName;
       if (!name) continue;
-      components.push({ ecosystem:'npm', name, version:entry.version, direct:packagePath.startsWith('node_modules/')&&!packagePath.slice('node_modules/'.length).includes('/node_modules/'), dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:npmPurl(name,entry.version), packagePath, ...(entry.license?{license:entry.license}:{}) });
+      byPath.set(packagePath, {name, version:entry.version, purl:npmPurl(name,entry.version)});
+    }
+    for (const [packagePath, entry] of Object.entries(lock.packages)) {
+      if (!packagePath || !entry.version) continue;
+      const resolved = byPath.get(packagePath); if (!resolved) continue;
+      const dependencies:string[]=[];
+      for(const depName of Object.keys(entry.dependencies??{})){
+        const dep=byPath.get(`node_modules/${depName}`) ?? [...byPath.entries()].find(([path])=>path.endsWith(`/node_modules/${depName}`))?.[1];
+        if(dep)dependencies.push(dep.purl);
+      }
+      const hashes=sriHashes(entry.integrity);
+      components.push({ ecosystem:'npm', name:resolved.name, version:resolved.version, direct:packagePath.startsWith('node_modules/')&&!packagePath.slice('node_modules/'.length).includes('/node_modules/'), dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:resolved.purl, packagePath, ...(entry.license?{license:entry.license}:{}), ...(hashes?{hashes}:{}), ...(dependencies.length?{dependencies}:{}) });
     }
   } else if (lock.dependencies) {
-    for (const [name, entry] of Object.entries(lock.dependencies)) if (entry.version) components.push({ ecosystem:'npm', name, version:entry.version, direct:true, dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:npmPurl(name,entry.version) });
+    const purls=new Map(Object.entries(lock.dependencies).filter(([,v])=>v.version).map(([name,v])=>[name,npmPurl(name,v.version!)]));
+    for (const [name, entry] of Object.entries(lock.dependencies)) if (entry.version) {
+      const hashes=sriHashes(entry.integrity); const dependencies=Object.keys(entry.requires??{}).map(n=>purls.get(n)).filter((v):v is string=>Boolean(v));
+      components.push({ ecosystem:'npm', name, version:entry.version, direct:true, dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:npmPurl(name,entry.version), ...(hashes?{hashes}:{}), ...(dependencies.length?{dependencies}:{}) });
+    }
   }
   return components;
 }
@@ -71,6 +98,13 @@ function parsePyproject(content: string): DependencyComponent[] {
   for(const raw of content.split(/\r?\n/)){const line=raw.trim();if(line==='dependencies = ['||line.startsWith('dependencies=[')){inDependencies=true;continue;}if(inDependencies&&line.startsWith(']')){inDependencies=false;continue;}if(!inDependencies)continue;const quoted=line.match(/["']([^"']+)["']/)?.[1];if(!quoted)continue;const match=quoted.match(/^([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)$/);if(match)components.push({ecosystem:'pypi',name:match[1]!,version:match[2]!,direct:true,dev:false,source:'pyproject.toml',purl:pypiPurl(match[1]!,match[2]!)})}
   return components;
 }
+function pyprojectDependencyNames(content:string|undefined):Set<string>{const out=new Set<string>();if(!content)return out;let inDependencies=false;for(const raw of content.split(/\r?\n/)){const line=raw.trim();if(/^dependencies\s*=\s*\[$/.test(line)){inDependencies=true;continue}if(inDependencies&&line.startsWith(']')){inDependencies=false;continue}if(!inDependencies)continue;const quoted=line.match(/["']([^"']+)["']/)?.[1];const name=quoted?.match(/^([A-Za-z0-9_.-]+)/)?.[1];if(name)out.add(name.toLowerCase())}return out;}
+function parsePoetryLock(content:string,directNames=new Set<string>()):DependencyComponent[]{
+  const out:DependencyComponent[]=[]; for(const block of content.split(/\n(?=\[\[package\]\])/g)){if(!block.includes('[[package]]'))continue;const name=block.match(/^name\s*=\s*"([^"]+)"/m)?.[1];const version=block.match(/^version\s*=\s*"([^"]+)"/m)?.[1];const category=block.match(/^category\s*=\s*"([^"]+)"/m)?.[1];if(name&&version)out.push({ecosystem:'pypi',name,version,direct:directNames.has(name.toLowerCase()),dev:category==='dev',source:'poetry.lock',purl:pypiPurl(name,version)});} return out;
+}
+function parseUvLock(content:string,directNames=new Set<string>()):DependencyComponent[]{
+  const out:DependencyComponent[]=[]; for(const block of content.split(/\n(?=\[\[package\]\])/g)){if(!block.includes('[[package]]'))continue;const name=block.match(/^name\s*=\s*"([^"]+)"/m)?.[1];const version=block.match(/^version\s*=\s*"([^"]+)"/m)?.[1];if(name&&version)out.push({ecosystem:'pypi',name,version,direct:directNames.has(name.toLowerCase()),dev:false,source:'uv.lock',purl:pypiPurl(name,version)});} return out;
+}
 function xmlValue(xml: string, tag: string): string | undefined {
   const m=xml.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`,'i')); return m?.[1]?.trim();
 }
@@ -82,16 +116,19 @@ function pomProperties(xml:string):Record<string,string>{
 function resolveMavenVersion(value:string|undefined, props:Record<string,string>):string|undefined{
   if(!value)return undefined; const m=value.match(/^\$\{([^}]+)\}$/); return m ? props[m[1]!] : value;
 }
-function parsePom(content:string):DependencyComponent[]{
-  const props=pomProperties(content); const components:DependencyComponent[]=[];
-  const depBlock=content.match(/<dependencies>([\s\S]*?)<\/dependencies>/gi)??[];
-  for(const block of depBlock){
-    for(const m of block.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)){
-      const x=m[1]!; const group=xmlValue(x,'groupId'); const artifact=xmlValue(x,'artifactId'); const version=resolveMavenVersion(xmlValue(x,'version'),props); const scope=xmlValue(x,'scope')??'compile';
-      if(!group||!artifact||!version||scope==='test')continue;
-      const name=`${group}:${artifact}`;
-      components.push({ecosystem:'maven',name,version,direct:true,dev:false,source:'pom.xml',purl:mavenPurl(group,artifact,version)});
-    }
+function parsePom(content:string, source='pom.xml'):DependencyComponent[]{
+  const props=pomProperties(content); const components:DependencyComponent[]=[]; const managed=new Map<string,string>();
+  const management=content.match(/<dependencyManagement>([\s\S]*?)<\/dependencyManagement>/i)?.[1]??'';
+  for(const m of management.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)){
+    const x=m[1]!; const group=xmlValue(x,'groupId'); const artifact=xmlValue(x,'artifactId'); const version=resolveMavenVersion(xmlValue(x,'version'),props);
+    if(group&&artifact&&version) managed.set(`${group}:${artifact}`,version);
+  }
+  const directContent=content.replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/gi,'');
+  for(const m of directContent.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)){
+    const x=m[1]!; const group=xmlValue(x,'groupId'); const artifact=xmlValue(x,'artifactId'); const scope=xmlValue(x,'scope')??'compile';
+    if(!group||!artifact||scope==='test')continue; const name=`${group}:${artifact}`;
+    const version=resolveMavenVersion(xmlValue(x,'version'),props)??managed.get(name); if(!version)continue;
+    components.push({ecosystem:'maven',name,version,direct:true,dev:false,source,purl:mavenPurl(group,artifact,version)});
   }
   return components;
 }
@@ -190,17 +227,16 @@ function cargoDependencyNames(content:string):{runtime:Set<string>;dev:Set<strin
 }
 function parseCargoLock(content:string,manifest?:string):DependencyComponent[]{
   const direct=manifest?cargoDependencyNames(manifest):{runtime:new Set<string>(),dev:new Set<string>()};
-  const out:DependencyComponent[]=[];
+  const raw:Array<{name:string;version:string;source:string;checksum?:string;deps:Array<{name:string;version?:string}>}>=[];
   for(const block of content.split(/\n(?=\[\[package\]\])/g)){
-    if(!block.includes('[[package]]'))continue;
-    const name=block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
-    const version=block.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
-    const source=block.match(/^\s*source\s*=\s*"([^"]+)"/m)?.[1]??'Cargo.lock';
-    if(!name||!version)continue;
-    const key=name.toLowerCase();
-    out.push({ecosystem:'cargo',name,version,direct:direct.runtime.has(key)||direct.dev.has(key),dev:direct.dev.has(key)&&!direct.runtime.has(key),source,purl:cargoPurl(name,version)});
+    if(!block.includes('[[package]]'))continue; const name=block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1]; const version=block.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
+    const source=block.match(/^\s*source\s*=\s*"([^"]+)"/m)?.[1]??'Cargo.lock'; const checksum=block.match(/^\s*checksum\s*=\s*"([a-fA-F0-9]+)"/m)?.[1]; if(!name||!version)continue;
+    const deps:Array<{name:string;version?:string}>=[]; const depBlock=block.match(/dependencies\s*=\s*\[([\s\S]*?)\]/m)?.[1]??'';
+    for(const m of depBlock.matchAll(/"([^" ]+)(?:\s+([^" ]+))?(?:\s+\([^)]*\))?"/g))deps.push({name:m[1]!,...(m[2]?{version:m[2]}:{})});
+    raw.push({name,version,source,...(checksum?{checksum}:{}),deps});
   }
-  return out;
+  const lookup=(name:string,version?:string)=>raw.find(x=>x.name===name&&(!version||x.version===version));
+  return raw.map(x=>{const key=x.name.toLowerCase();const dependencies=x.deps.map(d=>lookup(d.name,d.version)).filter((v):v is typeof raw[number]=>Boolean(v)).map(d=>cargoPurl(d.name,d.version));return {ecosystem:'cargo' as const,name:x.name,version:x.version,direct:direct.runtime.has(key)||direct.dev.has(key),dev:direct.dev.has(key)&&!direct.runtime.has(key),source:x.source,purl:cargoPurl(x.name,x.version),...(x.checksum?{hashes:[{algorithm:'SHA-256' as const,value:x.checksum}]}:{}),...(dependencies.length?{dependencies}:{})};});
 }
 function parseCargoTomlExact(content:string):DependencyComponent[]{
   const names=cargoDependencyNames(content); const out:DependencyComponent[]=[]; let section='';
@@ -213,62 +249,53 @@ function parseCargoTomlExact(content:string):DependencyComponent[]{
   return out;
 }
 function parseGoMod(content:string):DependencyComponent[]{
-  const out:DependencyComponent[]=[]; let inRequire=false;
+  const required:Array<{name:string;version:string;direct:boolean}>=[]; const excluded=new Set<string>(); const replacements=new Map<string,{name:string;version?:string;local:boolean}>(); let mode:''|'require'|'exclude'|'replace'='';
   for(const raw of content.split(/\r?\n/)){
-    let line=raw.trim(); if(!line||line.startsWith('//'))continue;
-    if(/^require\s*\($/.test(line)){inRequire=true;continue}
-    if(inRequire&&line===')'){inRequire=false;continue}
-    if(!inRequire){
-      const single=line.match(/^require\s+([^\s]+)\s+([^\s]+)(?:\s+\/\/\s+indirect)?$/);
-      if(!single)continue; line=`${single[1]} ${single[2]}${/\/\/\s*indirect/.test(raw)?' // indirect':''}`;
-    }
-    const m=line.match(/^([^\s]+)\s+(v[^\s]+)(?:\s+\/\/\s+indirect)?$/); if(!m)continue;
-    const indirect=/\/\/\s*indirect/.test(raw)||/\/\/\s*indirect/.test(line);
-    out.push({ecosystem:'go',name:m[1]!,version:m[2]!,direct:!indirect,dev:false,source:'go.mod',purl:goPurl(m[1]!,m[2]!)});
+    const line=raw.trim(); if(!line||line.startsWith('//'))continue;
+    const open=line.match(/^(require|exclude|replace)\s*\($/); if(open){mode=open[1] as typeof mode;continue} if(mode&&line===')'){mode='';continue}
+    const body=mode?line:line.replace(/^(require|exclude|replace)\s+/,''); const directive=mode||line.match(/^(require|exclude|replace)\s+/)?.[1] as typeof mode; if(!directive)continue;
+    if(directive==='require'){const m=body.match(/^([^\s]+)\s+(v[^\s]+)(?:\s+\/\/\s*indirect)?$/);if(m)required.push({name:m[1]!,version:m[2]!,direct:!/\/\/\s*indirect/.test(raw)});}
+    else if(directive==='exclude'){const m=body.match(/^([^\s]+)\s+(v[^\s]+)$/);if(m)excluded.add(`${m[1]}@${m[2]}`);}
+    else {const m=body.match(/^([^\s]+)(?:\s+v[^\s]+)?\s+=>\s+([^\s]+)(?:\s+(v[^\s]+))?$/);if(m)replacements.set(m[1]!,{name:m[2]!,...(m[3]?{version:m[3]}:{}),local:!m[3]});}
   }
+  const out:DependencyComponent[]=[];
+  for(const req of required){if(excluded.has(`${req.name}@${req.version}`))continue;const replacement=replacements.get(req.name);const name=replacement?.name??req.name;const version=replacement?.version??req.version;const source=replacement?`go.mod replace ${req.name} => ${replacement.name}${replacement.version?` ${replacement.version}`:''}`:'go.mod';out.push({ecosystem:'go',name,version,direct:req.direct,dev:false,source,purl:goPurl(name,version),...(replacement?{replacedFrom:`${req.name}@${req.version}`}:{})});}
   return out;
 }
 
 export function parseDependencyFiles(files:Record<string,string>,generatedAt:string):DependencySnapshot{
-  const c:DependencyComponent[]=[];
-  if(files['package-lock.json'])c.push(...parsePackageLock(files['package-lock.json']));
-  if(files['requirements.txt'])c.push(...parseRequirements(files['requirements.txt'],'requirements.txt'));
-  if(files['pyproject.toml'])c.push(...parsePyproject(files['pyproject.toml']));
-  if(files['pom.xml'])c.push(...parsePom(files['pom.xml']));
-  if(files['gradle.lockfile'])c.push(...parseGradleLock(files['gradle.lockfile']));
-  if(files['build.gradle'])c.push(...parseGradleBuild(files['build.gradle']));
-  if(files['build.gradle.kts'])c.push(...parseGradleBuild(files['build.gradle.kts']));
-  if(files['packages.lock.json'])c.push(...parseNugetLock(files['packages.lock.json']));
-  if(files['obj/project.assets.json'])c.push(...parseProjectAssets(files['obj/project.assets.json']));
-  if(files['conanfile.txt'])c.push(...parseConanfileTxt(files['conanfile.txt']));
-  if(files['conanfile.py'])c.push(...parseConanfilePy(files['conanfile.py']));
-  if(files['conan.lock'])c.push(...parseConanLock(files['conan.lock']));
-  if(files['vcpkg.json'])c.push(...parseVcpkgManifest(files['vcpkg.json']));
-  if(files['vcpkg-lock.json'])c.push(...parseVcpkgLock(files['vcpkg-lock.json']));
-  if(files['vcpkg_installed/vcpkg/status'])c.push(...parseVcpkgStatus(files['vcpkg_installed/vcpkg/status']));
-  if(files['Cargo.lock'])c.push(...parseCargoLock(files['Cargo.lock'],files['Cargo.toml']));
-  else if(files['Cargo.toml'])c.push(...parseCargoTomlExact(files['Cargo.toml']));
-  if(files['go.mod'])c.push(...parseGoMod(files['go.mod']));
-  if(files['vcpkg.json']){
-    try{
-      const manifest=JSON.parse(files['vcpkg.json']) as {dependencies?:unknown[]};
-      const directNames=new Set<string>();
-      for(const item of manifest.dependencies??[]){
-        if(typeof item==='string')directNames.add(item.toLowerCase());
-        else if(item&&typeof item==='object'&&!Array.isArray(item)&&typeof (item as Record<string,unknown>).name==='string')directNames.add(((item as Record<string,unknown>).name as string).toLowerCase());
-      }
-      for(let i=0;i<c.length;i+=1)if(c[i]?.ecosystem==='vcpkg'&&directNames.has(c[i]!.name.toLowerCase()))c[i]={...c[i]!,direct:true};
-    }catch{}
-  }
-  for(const [name,content] of Object.entries(files)) if(name.endsWith('.csproj')) c.push(...parseCsproj(content,name));
+  const c:DependencyComponent[]=[]; const entries=Object.entries(files);
+  const byBase=(base:string)=>entries.filter(([name])=>basename(name).toLowerCase()===base.toLowerCase());
+  for(const [name,content] of byBase('package-lock.json'))c.push(...parsePackageLock(content).map(x=>({...x,source:x.source==='package-lock.json'?name:x.source})));
+  for(const [name,content] of entries.filter(([n])=>/requirements(?:\.[^/]+)?\.txt$/i.test(basename(n))))c.push(...parseRequirements(content,name));
+  for(const [,content] of byBase('pyproject.toml'))c.push(...parsePyproject(content));
+  const pythonDirect=pyprojectDependencyNames(byBase('pyproject.toml')[0]?.[1]);
+  for(const [,content] of byBase('poetry.lock'))c.push(...parsePoetryLock(content,pythonDirect));
+  for(const [,content] of byBase('uv.lock'))c.push(...parseUvLock(content,pythonDirect));
+  for(const [name,content] of byBase('pom.xml'))c.push(...parsePom(content,name));
+  for(const [,content] of byBase('gradle.lockfile'))c.push(...parseGradleLock(content));
+  for(const [,content] of [...byBase('build.gradle'),...byBase('build.gradle.kts')])c.push(...parseGradleBuild(content));
+  for(const [,content] of byBase('packages.lock.json'))c.push(...parseNugetLock(content));
+  for(const [name,content] of entries.filter(([n])=>n.replace(/\\/g,'/').endsWith('obj/project.assets.json')))c.push(...parseProjectAssets(content).map(x=>({...x,source:name})));
+  for(const [,content] of byBase('conanfile.txt'))c.push(...parseConanfileTxt(content));
+  for(const [,content] of byBase('conanfile.py'))c.push(...parseConanfilePy(content));
+  for(const [,content] of byBase('conan.lock'))c.push(...parseConanLock(content));
+  for(const [,content] of byBase('vcpkg.json'))c.push(...parseVcpkgManifest(content));
+  for(const [,content] of byBase('vcpkg-lock.json'))c.push(...parseVcpkgLock(content));
+  for(const [,content] of entries.filter(([n])=>n.replace(/\\/g,'/').endsWith('vcpkg_installed/vcpkg/status')))c.push(...parseVcpkgStatus(content));
+  const cargoManifests=byBase('Cargo.toml').map(([,v])=>v).join('\n'); for(const [,lock] of byBase('Cargo.lock'))c.push(...parseCargoLock(lock,cargoManifests)); if(!byBase('Cargo.lock').length)for(const [,m] of byBase('Cargo.toml'))c.push(...parseCargoTomlExact(m));
+  for(const [,content] of byBase('go.mod'))c.push(...parseGoMod(content));
+  for(const [name,content] of entries)if(name.toLowerCase().endsWith('.csproj'))c.push(...parseCsproj(content,name));
+  const directVcpkg=new Set<string>(); for(const [,content] of byBase('vcpkg.json'))try{const manifest=JSON.parse(content) as {dependencies?:unknown[]};for(const item of manifest.dependencies??[]){if(typeof item==='string')directVcpkg.add(item.toLowerCase());else if(item&&typeof item==='object'&&!Array.isArray(item)&&typeof (item as Record<string,unknown>).name==='string')directVcpkg.add(((item as Record<string,unknown>).name as string).toLowerCase());}}catch{}
+  for(let i=0;i<c.length;i++)if(c[i]?.ecosystem==='vcpkg'&&directVcpkg.has(c[i]!.name.toLowerCase()))c[i]={...c[i]!,direct:true};
   return {generatedAt,components:uniq(c)};
 }
 
-export async function discoverDependencies(root:string,generatedAt=new Date().toISOString(),serviceRoot=''):Promise<DependencySnapshot>{
-  const files:Record<string,string>={}; const base=serviceRoot?resolve(root,serviceRoot):root;
-  for(const name of ['package-lock.json','requirements.txt','pyproject.toml','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json','vcpkg_installed/vcpkg/status','Cargo.toml','Cargo.lock','go.mod','go.sum']){
-    const value=await maybeRead(join(base,name)); if(value!==undefined)files[name]=value;
-  }
-  try{for(const entry of await readdir(base,{withFileTypes:true}))if(entry.isFile()&&entry.name.toLowerCase().endsWith('.csproj'))files[entry.name]=await readFile(join(base,entry.name),'utf8')}catch{}
-  return parseDependencyFiles(files,generatedAt);
+const DISCOVERY_NAMES=['package-lock.json','requirements.txt','requirements.lock','pyproject.toml','poetry.lock','uv.lock','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json','vcpkg_installed/vcpkg/status','Cargo.toml','Cargo.lock','go.mod','go.sum'];
+export function isDependencyInputPath(path:string):boolean{const n=path.replace(/\\/g,'/');const b=basename(n).toLowerCase();return DISCOVERY_NAMES.some(x=>n.toLowerCase().endsWith(x.toLowerCase()))||b.endsWith('.csproj')||/^requirements(?:\.[^/]+)?\.txt$/i.test(b);}
+
+async function collectDependencyFiles(base:string,current=base,out:Record<string,string>={}):Promise<Record<string,string>>{
+  let entries; try{entries=await readdir(current,{withFileTypes:true})}catch{return out} for(const entry of entries){if(['.git','node_modules','dist','build','.venv','venv'].includes(entry.name))continue;const full=join(current,entry.name);if(entry.isDirectory()){await collectDependencyFiles(base,full,out);continue}const rel=full.slice(base.length+1).replace(/\\/g,'/');if(isDependencyInputPath(rel)){const v=await maybeRead(full);if(v!==undefined)out[rel]=v;}}return out;
 }
+export async function discoverDependencies(root:string,generatedAt=new Date().toISOString(),serviceRoot=''):Promise<DependencySnapshot>{const base=serviceRoot?resolve(root,serviceRoot):root;return parseDependencyFiles(await collectDependencyFiles(base),generatedAt);}
+

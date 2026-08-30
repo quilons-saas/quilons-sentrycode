@@ -272,7 +272,7 @@ The pre-commit hook scans staged/index content, not merely the working tree. The
 
 ### External SAST
 
-Native SAST remains a baseline. Specialist scanners can run outside or through SentryCode and provide SARIF 2.1.0. Configure `sast.external` with either an analyzer command plus arguments or an existing SARIF path. Results are normalized into the same SentryCode finding/evidence authority as native rules.
+Native SAST is a deterministic baseline, not a replacement for mature specialist language analyzers. Specialist scanners can run outside or through SentryCode and provide SARIF 2.1.0. Configure `sast.external` with either an analyzer command plus arguments or an existing SARIF path. Results are normalized into the same SentryCode finding/evidence authority as native rules.
 
 ### Service-scoped dependency assurance
 
@@ -391,3 +391,8 @@ npm run acceptance:docker
 ```
 
 Both gates must pass before a market-ready release. See `docs/release/MARKET_READINESS_ACCEPTANCE.md`.
+
+
+## Cross-language market-readiness hardening
+
+The final market-readiness gate includes nested Git-ref dependency diffing across npm, PyPI, Maven/Gradle, NuGet, Conan, vcpkg, Cargo and Go modules; effective Go replace/exclude handling; workspace-aware Cargo lock classification; Maven dependency-management resolution; Poetry/uv locks; CycloneDX/SPDX dependency relationships and available hashes; denied-registry governance; and governed stale/deprecated dependency-maintenance criteria. See `SLICE_18_MARKET_READINESS_HARDENING.md`.

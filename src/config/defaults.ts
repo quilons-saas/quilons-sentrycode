@@ -34,9 +34,11 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
     enabled: true,
     includeDev: true,
     allowedRegistries: [],
+    deniedRegistries: [],
     deniedPackages: [],
     allowedPackages: [],
-    versionRestrictions: {}
+    versionRestrictions: {},
+    maintenance: { enabled: false, metadataFile: '.sentrycode/dependency-health.json', maxReleaseAgeDays: 730, denyDeprecated: true, requireMetadata: false }
   },
   licenses: {
     enabled: true,

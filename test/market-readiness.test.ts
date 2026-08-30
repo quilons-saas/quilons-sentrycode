@@ -47,7 +47,7 @@ test('market readiness SBOM formats serialize the full dependency matrix', () =>
   assert.equal(cdx.specVersion, '1.5');
   assert.equal(spdx.spdxVersion, 'SPDX-2.3');
   assert.equal(cdx.components.length, components.length);
-  assert.equal(spdx.packages.length, components.length);
+  assert.equal(spdx.packages.length, components.length + 1);
 });
 
 test('market readiness native SAST executes across every supported source language', async () => {

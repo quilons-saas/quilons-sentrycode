@@ -63,6 +63,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const scan = raw.scan === undefined ? {} : asObject(raw.scan, 'scan');
   const secrets = raw.secrets === undefined ? {} : asObject(raw.secrets, 'secrets');
   const dependencies = raw.dependencies === undefined ? {} : asObject(raw.dependencies, 'dependencies');
+  const dependencyMaintenance = dependencies.maintenance === undefined ? {} : asObject(dependencies.maintenance, 'dependencies.maintenance');
   const licenses = raw.licenses === undefined ? {} : asObject(raw.licenses, 'licenses');
   const vulnerabilities = raw.vulnerabilities === undefined ? {} : asObject(raw.vulnerabilities, 'vulnerabilities');
   const sbom = raw.sbom === undefined ? {} : asObject(raw.sbom, 'sbom');
@@ -133,9 +134,17 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       enabled: typeof dependencies.enabled === 'boolean' ? dependencies.enabled : DEFAULT_CONFIG.dependencies.enabled,
       includeDev: typeof dependencies.includeDev === 'boolean' ? dependencies.includeDev : DEFAULT_CONFIG.dependencies.includeDev,
       allowedRegistries: stringArray(dependencies.allowedRegistries, DEFAULT_CONFIG.dependencies.allowedRegistries, 'dependencies.allowedRegistries'),
+      deniedRegistries: stringArray(dependencies.deniedRegistries, DEFAULT_CONFIG.dependencies.deniedRegistries, 'dependencies.deniedRegistries'),
       deniedPackages: stringArray(dependencies.deniedPackages, DEFAULT_CONFIG.dependencies.deniedPackages, 'dependencies.deniedPackages'),
       allowedPackages: stringArray(dependencies.allowedPackages, DEFAULT_CONFIG.dependencies.allowedPackages, 'dependencies.allowedPackages'),
-      versionRestrictions: stringRecord(dependencies.versionRestrictions, DEFAULT_CONFIG.dependencies.versionRestrictions, 'dependencies.versionRestrictions')
+      versionRestrictions: stringRecord(dependencies.versionRestrictions, DEFAULT_CONFIG.dependencies.versionRestrictions, 'dependencies.versionRestrictions'),
+      maintenance: {
+        enabled: typeof dependencyMaintenance.enabled === 'boolean' ? dependencyMaintenance.enabled : DEFAULT_CONFIG.dependencies.maintenance.enabled,
+        metadataFile: typeof dependencyMaintenance.metadataFile === 'string' ? dependencyMaintenance.metadataFile : DEFAULT_CONFIG.dependencies.maintenance.metadataFile,
+        maxReleaseAgeDays: typeof dependencyMaintenance.maxReleaseAgeDays === 'number' && dependencyMaintenance.maxReleaseAgeDays >= 0 ? dependencyMaintenance.maxReleaseAgeDays : DEFAULT_CONFIG.dependencies.maintenance.maxReleaseAgeDays,
+        denyDeprecated: typeof dependencyMaintenance.denyDeprecated === 'boolean' ? dependencyMaintenance.denyDeprecated : DEFAULT_CONFIG.dependencies.maintenance.denyDeprecated,
+        requireMetadata: typeof dependencyMaintenance.requireMetadata === 'boolean' ? dependencyMaintenance.requireMetadata : DEFAULT_CONFIG.dependencies.maintenance.requireMetadata
+      }
     },
     licenses: {
       enabled: typeof licenses.enabled === 'boolean' ? licenses.enabled : DEFAULT_CONFIG.licenses.enabled,

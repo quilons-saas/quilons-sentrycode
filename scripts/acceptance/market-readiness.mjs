@@ -38,8 +38,11 @@ const cdx=cyclonedxSbom(repository,snapshot.components,now);
 const spdx=spdxSbom(repository,snapshot.components,now);
 if(cdx.bomFormat!=='CycloneDX'||cdx.specVersion!=='1.5') fail('CycloneDX acceptance failed');
 if(spdx.spdxVersion!=='SPDX-2.3') fail('SPDX acceptance failed');
-if(cdx.components.length!==snapshot.components.length||spdx.packages.length!==snapshot.components.length) fail('SBOM component coverage mismatch');
-pass('CycloneDX 1.5 and SPDX 2.3 cover the complete dependency matrix');
+if(cdx.components.length!==snapshot.components.length||spdx.packages.length!==snapshot.components.length+1) fail('SBOM component coverage mismatch');
+if(!Array.isArray(cdx.dependencies)||!cdx.dependencies.length) fail('CycloneDX dependency graph missing');
+if(!Array.isArray(spdx.relationships)||!spdx.relationships.some((r)=>r.relationshipType==='DEPENDS_ON')) fail('SPDX dependency relationships missing');
+if(spdx.creationInfo?.creators?.[0]!=='Tool: QUILONS SentryCode-0.1.0') fail('SPDX tool version mismatch');
+pass('CycloneDX 1.5 and SPDX 2.3 cover the complete dependency matrix with relationships');
 
 const temp=await mkdtemp(join(tmpdir(),'sentrycode-market-readiness-'));
 try{

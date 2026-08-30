@@ -47,3 +47,8 @@ Language support is not treated as a SAST-only capability. Dependency ecosystems
 C/C++ automotive MISRA/AUTOSAR findings remain complementary external-analyzer evidence and are not replaced by generic native SAST.
 
 Gerrit remains a first-class governed CI/review integration and is covered by the complete regression suite.
+
+
+## Hardened completion criteria
+
+The completion gate additionally validates nested Git-ref dependency changes for every supported ecosystem, effective Go replacement/exclusion semantics, Cargo workspace lock classification, Maven dependency-management resolution, Poetry/uv lock ingestion, SBOM relationships and available checksums, denied registry policy, and governed dependency maintenance metadata. Built-in SAST is explicitly a deterministic baseline; specialist analyzers integrate through SARIF for deeper language-specific coverage.
