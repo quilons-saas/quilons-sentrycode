@@ -39,7 +39,11 @@ export async function discoverServices(root: string, config: SentryCodeConfig): 
     else if (await exists(resolve(abs, 'pyproject.toml')) || await exists(resolve(abs, 'requirements.txt'))) kind = 'python';
     else if (await exists(resolve(abs, 'pom.xml')) || await exists(resolve(abs, 'build.gradle')) || await exists(resolve(abs, 'build.gradle.kts'))) kind = 'java';
     else {
-      try { if ((await readdir(abs)).some((name) => name.toLowerCase().endsWith('.csproj'))) kind = 'dotnet'; } catch {}
+      try {
+        const names = await readdir(abs);
+        if (names.some((name) => name.toLowerCase().endsWith('.csproj'))) kind = 'dotnet';
+        else if (names.some((name) => ['cmakelists.txt','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json'].includes(name.toLowerCase()))) kind = 'cpp';
+      } catch {}
     }
     services.push({ name: serviceRoot ? basename(serviceRoot) : basename(root), root: serviceRoot, kind });
   }

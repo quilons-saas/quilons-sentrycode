@@ -20,6 +20,12 @@ const RULES: Rule[] = [
   { id: 'csharp-binaryformatter', languages: ['csharp'], severity: 'critical', pattern: /\bBinaryFormatter\b|\.Deserialize\s*\(/g, title: 'Unsafe .NET binary deserialization', description: 'BinaryFormatter-style deserialization is unsafe for untrusted data.', remediation: 'Use a safe serializer with explicit contract types.' },
   { id: 'csharp-weak-digest', languages: ['csharp'], severity: 'medium', pattern: /\b(?:MD5|SHA1)\.Create\s*\(/g, title: 'Weak cryptographic digest', description: 'MD5 and SHA-1 are unsuitable for security-sensitive integrity decisions.', remediation: 'Use SHA256 or stronger.' },
   { id: 'csharp-sql-concat', languages: ['csharp'], severity: 'high', pattern: /(?:SqlCommand|ExecuteSqlRaw)\s*\([^\n;]*\+/g, title: 'SQL built by string concatenation', description: 'Concatenating values into SQL can enable SQL injection.', remediation: 'Use parameterized SQL commands.' },
+  { id: 'c-system-call', languages: ['c','cpp'], severity: 'high', pattern: /\bsystem\s*\(/g, title: 'Shell command execution', description: 'system() invokes a shell and can enable command injection when input is untrusted.', remediation: 'Avoid shell invocation; use a fixed executable and validated argument vector.' },
+  { id: 'c-gets', languages: ['c','cpp'], severity: 'critical', pattern: /\bgets\s*\(/g, title: 'Unbounded input with gets', description: 'gets() cannot bound input and can cause a buffer overflow.', remediation: 'Use fgets or another bounded input API.' },
+  { id: 'c-strcpy', languages: ['c','cpp'], severity: 'high', pattern: /\b(?:strcpy|strcat)\s*\(/g, title: 'Unbounded C string copy', description: 'Unbounded string copy/concatenation can overflow destination buffers.', remediation: 'Use a bounded API and validate destination capacity.' },
+  { id: 'c-sprintf', languages: ['c','cpp'], severity: 'high', pattern: /\bsprintf\s*\(/g, title: 'Unbounded formatted output', description: 'sprintf can overflow a destination buffer.', remediation: 'Use snprintf with the actual destination size.' },
+  { id: 'c-tmpnam', languages: ['c','cpp'], severity: 'high', pattern: /\btmpnam\s*\(/g, title: 'Insecure temporary file name', description: 'tmpnam is vulnerable to race conditions and predictable-name attacks.', remediation: 'Use a securely created temporary file API.' },
+  { id: 'c-insecure-rand', languages: ['c','cpp'], severity: 'medium', pattern: /\brand\s*\(/g, title: 'Non-cryptographic randomness', description: 'rand() is unsuitable for security-sensitive randomness.', remediation: 'Use the platform cryptographic random-number generator.' },
 ];
 
 function language(path: string): SastLanguage | null {
@@ -29,6 +35,8 @@ function language(path: string): SastLanguage | null {
   if (ext === '.py') return 'python';
   if (ext === '.java') return 'java';
   if (ext === '.cs') return 'csharp';
+  if (ext === '.c' || ext === '.h') return 'c';
+  if (['.cc','.cpp','.cxx','.c++','.hh','.hpp','.hxx'].includes(ext)) return 'cpp';
   return null;
 }
 function pos(content: string, index: number) { const before=content.slice(0,index).split('\n'); return { line: before.length, column: (before.at(-1)?.length ?? 0)+1 }; }

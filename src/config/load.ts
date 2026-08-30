@@ -5,7 +5,7 @@ import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/typ
 
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
-const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python', 'java', 'csharp']);
+const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python', 'java', 'csharp', 'c', 'cpp']);
 const VALID_CI_PROVIDERS = new Set(['auto','github','gitlab','azure-devops','jenkins','gerrit','generic','local']);
 const VALID_AUTOMOTIVE_STANDARDS = new Set(['misra-c','misra-cpp','autosar-cpp']);
 const VALID_AUTOMOTIVE_TARGETS = new Set(['iso-sae-21434','unece-r155','unece-r156']);

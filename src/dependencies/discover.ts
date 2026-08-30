@@ -123,6 +123,53 @@ function parseProjectAssets(content:string):DependencyComponent[]{
   return components;
 }
 
+function conanPurl(name:string,version:string):string{return `pkg:conan/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;}
+function vcpkgPurl(name:string,version:string):string{return `pkg:vcpkg/${encodeURIComponent(name.toLowerCase())}@${encodeURIComponent(version)}`;}
+function parseConanRef(ref:string,source:string,direct:boolean):DependencyComponent|undefined{
+  const clean=ref.trim().replace(/^['\"]|['\"]$/g,'').split('#')[0]!.split('%')[0]!;
+  const m=clean.match(/^([A-Za-z0-9_.+\-]+)\/([^@\s]+)(?:@[^\s]+)?$/); if(!m)return undefined;
+  return {ecosystem:'conan',name:m[1]!,version:m[2]!,direct,dev:false,source,purl:conanPurl(m[1]!,m[2]!)};
+}
+function parseConanfileTxt(content:string):DependencyComponent[]{
+  const out:DependencyComponent[]=[]; let section='';
+  for(const raw of content.split(/\r?\n/)){const line=raw.trim(); if(!line||line.startsWith('#'))continue; if(/^\[[^\]]+\]$/.test(line)){section=line.toLowerCase();continue;} if(section==='[requires]'||section==='[tool_requires]'||section==='[build_requires]'){const c=parseConanRef(line,'conanfile.txt',true); if(c)out.push({...c,dev:section!=='[requires]'});}}
+  return out;
+}
+function parseConanfilePy(content:string):DependencyComponent[]{
+  const out:DependencyComponent[]=[];
+  for(const m of content.matchAll(/\b(requires|tool_requires)\s*=\s*(?:\(([\s\S]*?)\)|\[([\s\S]*?)\])/g)){
+    const body=m[2]??m[3]??''; for(const q of body.matchAll(/[\"']([^\"']+)[\"']/g)){const c=parseConanRef(q[1]!,'conanfile.py',true);if(c)out.push({...c,dev:m[1]==='tool_requires'})}
+  }
+  for(const m of content.matchAll(/self\.(requires|tool_requires)\s*\(\s*[\"']([^\"']+)[\"']/g)){const c=parseConanRef(m[2]!,'conanfile.py',true);if(c)out.push({...c,dev:m[1]==='tool_requires'})}
+  return out;
+}
+function parseConanLock(content:string):DependencyComponent[]{
+  const out:DependencyComponent[]=[]; let value:unknown; try{value=JSON.parse(content)}catch{return out}
+  const walk=(x:unknown)=>{if(Array.isArray(x)){for(const v of x)walk(v);return;} if(!x||typeof x!=='object')return; for(const [k,v] of Object.entries(x as Record<string,unknown>)){if((k==='ref'||k==='reference')&&typeof v==='string'){const c=parseConanRef(v,'conan.lock',false);if(c)out.push(c)} else walk(v)}}; walk(value); return out;
+}
+function vcpkgVersion(x:Record<string,unknown>):string|undefined{
+  for(const k of ['version','version-string','version-semver','version-date'])if(typeof x[k]==='string'&&x[k])return x[k] as string; return undefined;
+}
+function parseVcpkgManifest(content:string):DependencyComponent[]{
+  let x:Record<string,unknown>;try{x=JSON.parse(content) as Record<string,unknown>}catch{return []} const out:DependencyComponent[]=[];
+  for(const item of Array.isArray(x.dependencies)?x.dependencies:[]){if(typeof item==='string')continue;if(!item||typeof item!=='object'||Array.isArray(item))continue;const o=item as Record<string,unknown>;const name=typeof o.name==='string'?o.name:undefined;const version=vcpkgVersion(o);if(name&&version)out.push({ecosystem:'vcpkg',name,version,direct:true,dev:false,source:'vcpkg.json',purl:vcpkgPurl(name,version)});} return out;
+}
+function parseVcpkgLock(content:string):DependencyComponent[]{
+  let x:unknown;try{x=JSON.parse(content)}catch{return []} const out:DependencyComponent[]=[];
+  const walk=(v:unknown)=>{if(Array.isArray(v)){for(const a of v)walk(a);return;}if(!v||typeof v!=='object')return;const o=v as Record<string,unknown>;const name=typeof o.name==='string'?o.name:typeof o.package==='string'?o.package:undefined;const version=vcpkgVersion(o);if(name&&version)out.push({ecosystem:'vcpkg',name,version,direct:false,dev:false,source:'vcpkg-lock.json',purl:vcpkgPurl(name,version)});for(const c of Object.values(o))if(typeof c==='object')walk(c)};walk(x);return out;
+}
+
+function parseVcpkgStatus(content:string):DependencyComponent[]{
+  const out:DependencyComponent[]=[];
+  for(const block of content.split(/\r?\n\r?\n/)){
+    const fields:Record<string,string>={};
+    for(const raw of block.split(/\r?\n/)){const m=raw.match(/^([A-Za-z0-9-]+):\s*(.+)$/);if(m)fields[m[1]!.toLowerCase()]=m[2]!.trim();}
+    const name=fields.package, version=fields.version; if(!name||!version)continue;
+    out.push({ecosystem:'vcpkg',name,version,direct:false,dev:false,source:'vcpkg_installed/vcpkg/status',purl:vcpkgPurl(name,version)});
+  }
+  return out;
+}
+
 export function parseDependencyFiles(files:Record<string,string>,generatedAt:string):DependencySnapshot{
   const c:DependencyComponent[]=[];
   if(files['package-lock.json'])c.push(...parsePackageLock(files['package-lock.json']));
@@ -134,13 +181,30 @@ export function parseDependencyFiles(files:Record<string,string>,generatedAt:str
   if(files['build.gradle.kts'])c.push(...parseGradleBuild(files['build.gradle.kts']));
   if(files['packages.lock.json'])c.push(...parseNugetLock(files['packages.lock.json']));
   if(files['obj/project.assets.json'])c.push(...parseProjectAssets(files['obj/project.assets.json']));
+  if(files['conanfile.txt'])c.push(...parseConanfileTxt(files['conanfile.txt']));
+  if(files['conanfile.py'])c.push(...parseConanfilePy(files['conanfile.py']));
+  if(files['conan.lock'])c.push(...parseConanLock(files['conan.lock']));
+  if(files['vcpkg.json'])c.push(...parseVcpkgManifest(files['vcpkg.json']));
+  if(files['vcpkg-lock.json'])c.push(...parseVcpkgLock(files['vcpkg-lock.json']));
+  if(files['vcpkg_installed/vcpkg/status'])c.push(...parseVcpkgStatus(files['vcpkg_installed/vcpkg/status']));
+  if(files['vcpkg.json']){
+    try{
+      const manifest=JSON.parse(files['vcpkg.json']) as {dependencies?:unknown[]};
+      const directNames=new Set<string>();
+      for(const item of manifest.dependencies??[]){
+        if(typeof item==='string')directNames.add(item.toLowerCase());
+        else if(item&&typeof item==='object'&&!Array.isArray(item)&&typeof (item as Record<string,unknown>).name==='string')directNames.add(((item as Record<string,unknown>).name as string).toLowerCase());
+      }
+      for(let i=0;i<c.length;i+=1)if(c[i]?.ecosystem==='vcpkg'&&directNames.has(c[i]!.name.toLowerCase()))c[i]={...c[i]!,direct:true};
+    }catch{}
+  }
   for(const [name,content] of Object.entries(files)) if(name.endsWith('.csproj')) c.push(...parseCsproj(content,name));
   return {generatedAt,components:uniq(c)};
 }
 
 export async function discoverDependencies(root:string,generatedAt=new Date().toISOString(),serviceRoot=''):Promise<DependencySnapshot>{
   const files:Record<string,string>={}; const base=serviceRoot?resolve(root,serviceRoot):root;
-  for(const name of ['package-lock.json','requirements.txt','pyproject.toml','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json']){
+  for(const name of ['package-lock.json','requirements.txt','pyproject.toml','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json','vcpkg_installed/vcpkg/status']){
     const value=await maybeRead(join(base,name)); if(value!==undefined)files[name]=value;
   }
   try{for(const entry of await readdir(base,{withFileTypes:true}))if(entry.isFile()&&entry.name.toLowerCase().endsWith('.csproj'))files[entry.name]=await readFile(join(base,entry.name),'utf8')}catch{}

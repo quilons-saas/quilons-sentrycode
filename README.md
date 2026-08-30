@@ -109,8 +109,11 @@ See `.sentrycode/examples/release.rego`.
 - Java Maven `pom.xml`
 - Java Gradle `build.gradle`, `build.gradle.kts`, and resolved `gradle.lockfile`
 - .NET/C# `.csproj`, NuGet `packages.lock.json`, and resolved `obj/project.assets.json`
-- package URLs and OSV synchronization for npm, PyPI, Maven, and NuGet
-- local Maven/NuGet cache license enrichment when package metadata is available
+- C/C++ Conan `conanfile.txt`, `conanfile.py`, and `conan.lock`
+- C/C++ vcpkg `vcpkg.json`, `vcpkg-lock.json`, and resolved `vcpkg_installed/vcpkg/status`
+- CMake/Conan/vcpkg service discovery for C/C++ monorepos
+- package URLs for npm, PyPI, Maven, NuGet, Conan, and vcpkg; OSV synchronization remains limited to OSV-supported package ecosystems while C/C++ components use the same local/offline advisory database and governed intelligence-bundle path
+- local Maven/NuGet cache license enrichment when package metadata is available; Conan/vcpkg license policy uses discovered metadata when present plus governed overrides/unknown-license policy
 - CycloneDX 1.5
 - SPDX 2.3
 - Git-ref dependency diffing
@@ -119,7 +122,7 @@ See `.sentrycode/examples/release.rego`.
 - offline vulnerability database
 - `sbom.generated`, `dependency.check`, `license.check`, `vuln.scan` evidence
 
-Unpinned Python constraints are intentionally not converted into invented installed versions.
+Unpinned Python constraints and unversioned vcpkg manifest entries are intentionally not converted into invented installed versions; resolved lock/status data is used when available.
 
 ## Slice 3 — policy-as-code and release gate
 
@@ -143,7 +146,7 @@ The release gate is based on the same normalized findings, evidence and effectiv
 
 SentryCode now includes native security-analysis and provenance capabilities in the standard scan pipeline:
 
-- Native TypeScript/JavaScript, Python, Java, and C# SAST rules for high-risk constructs such as dynamic `eval`, shell/process execution, unsafe deserialization, SQL string construction, and weak cryptographic digests.
+- Native TypeScript/JavaScript, Python, Java, C#, C, and C++ SAST rules for high-risk constructs such as dynamic `eval`, shell/process execution, unsafe deserialization, SQL string construction, and weak cryptographic digests.
 - Git assurance evidence for commit author identity, commit signature state, clean-working-tree policy, and configurable author email domains.
 - A Git-provider governance adapter boundary for future branch-protection/review checks without coupling core to GitHub/GitLab/Azure DevOps.
 - `build.attestation` and `provenance.attestation` evidence generated from repository/build context.
