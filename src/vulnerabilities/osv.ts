@@ -7,7 +7,7 @@ import { enrichDependencyMetadata } from '../dependencies/metadata.js';
 interface OsvQueryResult { vulns?: Array<{ id: string; modified?: string }>; next_page_token?: string; }
 interface OsvBatch { results?: OsvQueryResult[]; }
 
-function ecosystem(value: DependencyComponent['ecosystem']): string | undefined { return value === 'npm' ? 'npm' : value === 'pypi' ? 'PyPI' : value === 'maven' ? 'Maven' : value === 'nuget' ? 'NuGet' : undefined; }
+function ecosystem(value: DependencyComponent['ecosystem']): string | undefined { return value === 'npm' ? 'npm' : value === 'pypi' ? 'PyPI' : value === 'maven' ? 'Maven' : value === 'nuget' ? 'NuGet' : value === 'cargo' ? 'crates.io' : value === 'go' ? 'Go' : undefined; }
 function severityFrom(value: Record<string, unknown>): Severity {
   const database = value.database_specific && typeof value.database_specific === 'object' ? value.database_specific as Record<string, unknown> : {};
   const raw = String(database.severity ?? '').toLowerCase();

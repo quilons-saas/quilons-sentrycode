@@ -111,9 +111,11 @@ See `.sentrycode/examples/release.rego`.
 - .NET/C# `.csproj`, NuGet `packages.lock.json`, and resolved `obj/project.assets.json`
 - C/C++ Conan `conanfile.txt`, `conanfile.py`, and `conan.lock`
 - C/C++ vcpkg `vcpkg.json`, `vcpkg-lock.json`, and resolved `vcpkg_installed/vcpkg/status`
+- Rust `Cargo.toml` and resolved `Cargo.lock`
+- Go `go.mod` / `go.sum`
 - CMake/Conan/vcpkg service discovery for C/C++ monorepos
-- package URLs for npm, PyPI, Maven, NuGet, Conan, and vcpkg; OSV synchronization remains limited to OSV-supported package ecosystems while C/C++ components use the same local/offline advisory database and governed intelligence-bundle path
-- local Maven/NuGet cache license enrichment when package metadata is available; Conan/vcpkg license policy uses discovered metadata when present plus governed overrides/unknown-license policy
+- package URLs for npm, PyPI, Maven, NuGet, Conan, vcpkg, Cargo, and Go; OSV synchronization remains limited to OSV-supported package ecosystems while C/C++ components use the same local/offline advisory database and governed intelligence-bundle path
+- local Maven/NuGet/Cargo/Go cache license enrichment when package metadata is available; Conan/vcpkg license policy uses discovered metadata when present plus governed overrides/unknown-license policy
 - CycloneDX 1.5
 - SPDX 2.3
 - Git-ref dependency diffing

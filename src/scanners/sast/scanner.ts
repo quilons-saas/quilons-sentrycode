@@ -26,6 +26,12 @@ const RULES: Rule[] = [
   { id: 'c-sprintf', languages: ['c','cpp'], severity: 'high', pattern: /\bsprintf\s*\(/g, title: 'Unbounded formatted output', description: 'sprintf can overflow a destination buffer.', remediation: 'Use snprintf with the actual destination size.' },
   { id: 'c-tmpnam', languages: ['c','cpp'], severity: 'high', pattern: /\btmpnam\s*\(/g, title: 'Insecure temporary file name', description: 'tmpnam is vulnerable to race conditions and predictable-name attacks.', remediation: 'Use a securely created temporary file API.' },
   { id: 'c-insecure-rand', languages: ['c','cpp'], severity: 'medium', pattern: /\brand\s*\(/g, title: 'Non-cryptographic randomness', description: 'rand() is unsuitable for security-sensitive randomness.', remediation: 'Use the platform cryptographic random-number generator.' },
+  { id: 'rust-shell-command', languages: ['rust'], severity: 'high', pattern: /Command::new\s*\(\s*["'](?:sh|bash|cmd(?:\.exe)?)["']\s*\)[\s\S]{0,160}?\.arg\s*\(\s*["'](?:-c|\/C)["']\s*\)/g, title: 'Shell command execution', description: 'Launching a command shell with a command string can enable command injection.', remediation: 'Invoke the target executable directly and pass validated arguments separately.' },
+  { id: 'rust-transmute', languages: ['rust'], severity: 'high', pattern: /\b(?:std::mem::)?transmute\s*(?:::<[^>]+>)?\s*\(/g, title: 'Unsafe memory transmutation', description: 'transmute can violate type and memory safety invariants.', remediation: 'Use a safe conversion API or narrowly audited unsafe code with explicit invariants.' },
+  { id: 'rust-unchecked-utf8', languages: ['rust'], severity: 'medium', pattern: /\bfrom_utf8_unchecked\s*\(/g, title: 'Unchecked UTF-8 conversion', description: 'Unchecked UTF-8 conversion can create invalid strings and violate safety assumptions.', remediation: 'Use from_utf8 and handle validation errors.' },
+  { id: 'go-shell-command', languages: ['go'], severity: 'high', pattern: /exec\.Command\s*\(\s*["'](?:sh|bash|cmd(?:\.exe)?)["']\s*,\s*["'](?:-c|\/C)["']/g, title: 'Shell command execution', description: 'Launching a command shell with a command string can enable command injection.', remediation: 'Invoke the intended executable directly and pass validated arguments separately.' },
+  { id: 'go-tls-insecure-skip-verify', languages: ['go'], severity: 'high', pattern: /InsecureSkipVerify\s*:\s*true/g, title: 'TLS certificate verification disabled', description: 'Disabling TLS certificate verification permits man-in-the-middle attacks.', remediation: 'Keep certificate verification enabled and configure trusted roots correctly.' },
+  { id: 'go-weak-digest', languages: ['go'], severity: 'medium', pattern: /\b(?:md5|sha1)\.New\s*\(/g, title: 'Weak cryptographic digest', description: 'MD5 and SHA-1 are unsuitable for security-sensitive integrity decisions.', remediation: 'Use SHA-256 or stronger for security-sensitive hashing.' },
 ];
 
 function language(path: string): SastLanguage | null {
@@ -37,6 +43,8 @@ function language(path: string): SastLanguage | null {
   if (ext === '.cs') return 'csharp';
   if (ext === '.c' || ext === '.h') return 'c';
   if (['.cc','.cpp','.cxx','.c++','.hh','.hpp','.hxx'].includes(ext)) return 'cpp';
+  if (ext === '.rs') return 'rust';
+  if (ext === '.go') return 'go';
   return null;
 }
 function pos(content: string, index: number) { const before=content.slice(0,index).split('\n'); return { line: before.length, column: (before.at(-1)?.length ?? 0)+1 }; }

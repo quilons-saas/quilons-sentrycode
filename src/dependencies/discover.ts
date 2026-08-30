@@ -19,6 +19,12 @@ function mavenPurl(group: string, artifact: string, version: string): string {
 function nugetPurl(name: string, version: string): string {
   return `pkg:nuget/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;
 }
+function cargoPurl(name: string, version: string): string {
+  return `pkg:cargo/${encodeURIComponent(name.toLowerCase())}@${encodeURIComponent(version)}`;
+}
+function goPurl(name: string, version: string): string {
+  return `pkg:golang/${name.split('/').map((part)=>encodeURIComponent(part)).join('/')}@${encodeURIComponent(version)}`;
+}
 async function exists(path: string): Promise<boolean> {
   try { await readFile(path); return true; } catch { return false; }
 }
@@ -170,6 +176,59 @@ function parseVcpkgStatus(content:string):DependencyComponent[]{
   return out;
 }
 
+
+function cargoDependencyNames(content:string):{runtime:Set<string>;dev:Set<string>}{
+  const runtime=new Set<string>(),dev=new Set<string>(); let section='';
+  for(const raw of content.split(/\r?\n/)){
+    const line=raw.trim(); if(!line||line.startsWith('#'))continue;
+    const s=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase(); if(s){section=s;continue}
+    if(!['dependencies','dev-dependencies','build-dependencies'].includes(section))continue;
+    const m=line.match(/^([A-Za-z0-9_.-]+)\s*=/); if(!m)continue;
+    (section==='dev-dependencies'||section==='build-dependencies'?dev:runtime).add(m[1]!.toLowerCase());
+  }
+  return {runtime,dev};
+}
+function parseCargoLock(content:string,manifest?:string):DependencyComponent[]{
+  const direct=manifest?cargoDependencyNames(manifest):{runtime:new Set<string>(),dev:new Set<string>()};
+  const out:DependencyComponent[]=[];
+  for(const block of content.split(/\n(?=\[\[package\]\])/g)){
+    if(!block.includes('[[package]]'))continue;
+    const name=block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
+    const version=block.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
+    const source=block.match(/^\s*source\s*=\s*"([^"]+)"/m)?.[1]??'Cargo.lock';
+    if(!name||!version)continue;
+    const key=name.toLowerCase();
+    out.push({ecosystem:'cargo',name,version,direct:direct.runtime.has(key)||direct.dev.has(key),dev:direct.dev.has(key)&&!direct.runtime.has(key),source,purl:cargoPurl(name,version)});
+  }
+  return out;
+}
+function parseCargoTomlExact(content:string):DependencyComponent[]{
+  const names=cargoDependencyNames(content); const out:DependencyComponent[]=[]; let section='';
+  for(const raw of content.split(/\r?\n/)){
+    const line=raw.trim(); const s=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase(); if(s){section=s;continue}
+    if(!['dependencies','dev-dependencies','build-dependencies'].includes(section))continue;
+    const m=line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(?:"=([^"]+)"|\{\s*version\s*=\s*"=([^"]+)")/); if(!m)continue;
+    const name=m[1]!,version=(m[2]??m[3])!; out.push({ecosystem:'cargo',name,version,direct:true,dev:section!=='dependencies',source:'Cargo.toml',purl:cargoPurl(name,version)});
+  }
+  return out;
+}
+function parseGoMod(content:string):DependencyComponent[]{
+  const out:DependencyComponent[]=[]; let inRequire=false;
+  for(const raw of content.split(/\r?\n/)){
+    let line=raw.trim(); if(!line||line.startsWith('//'))continue;
+    if(/^require\s*\($/.test(line)){inRequire=true;continue}
+    if(inRequire&&line===')'){inRequire=false;continue}
+    if(!inRequire){
+      const single=line.match(/^require\s+([^\s]+)\s+([^\s]+)(?:\s+\/\/\s+indirect)?$/);
+      if(!single)continue; line=`${single[1]} ${single[2]}${/\/\/\s*indirect/.test(raw)?' // indirect':''}`;
+    }
+    const m=line.match(/^([^\s]+)\s+(v[^\s]+)(?:\s+\/\/\s+indirect)?$/); if(!m)continue;
+    const indirect=/\/\/\s*indirect/.test(raw)||/\/\/\s*indirect/.test(line);
+    out.push({ecosystem:'go',name:m[1]!,version:m[2]!,direct:!indirect,dev:false,source:'go.mod',purl:goPurl(m[1]!,m[2]!)});
+  }
+  return out;
+}
+
 export function parseDependencyFiles(files:Record<string,string>,generatedAt:string):DependencySnapshot{
   const c:DependencyComponent[]=[];
   if(files['package-lock.json'])c.push(...parsePackageLock(files['package-lock.json']));
@@ -187,6 +246,9 @@ export function parseDependencyFiles(files:Record<string,string>,generatedAt:str
   if(files['vcpkg.json'])c.push(...parseVcpkgManifest(files['vcpkg.json']));
   if(files['vcpkg-lock.json'])c.push(...parseVcpkgLock(files['vcpkg-lock.json']));
   if(files['vcpkg_installed/vcpkg/status'])c.push(...parseVcpkgStatus(files['vcpkg_installed/vcpkg/status']));
+  if(files['Cargo.lock'])c.push(...parseCargoLock(files['Cargo.lock'],files['Cargo.toml']));
+  else if(files['Cargo.toml'])c.push(...parseCargoTomlExact(files['Cargo.toml']));
+  if(files['go.mod'])c.push(...parseGoMod(files['go.mod']));
   if(files['vcpkg.json']){
     try{
       const manifest=JSON.parse(files['vcpkg.json']) as {dependencies?:unknown[]};
@@ -204,7 +266,7 @@ export function parseDependencyFiles(files:Record<string,string>,generatedAt:str
 
 export async function discoverDependencies(root:string,generatedAt=new Date().toISOString(),serviceRoot=''):Promise<DependencySnapshot>{
   const files:Record<string,string>={}; const base=serviceRoot?resolve(root,serviceRoot):root;
-  for(const name of ['package-lock.json','requirements.txt','pyproject.toml','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json','vcpkg_installed/vcpkg/status']){
+  for(const name of ['package-lock.json','requirements.txt','pyproject.toml','pom.xml','gradle.lockfile','build.gradle','build.gradle.kts','packages.lock.json','obj/project.assets.json','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json','vcpkg_installed/vcpkg/status','Cargo.toml','Cargo.lock','go.mod','go.sum']){
     const value=await maybeRead(join(base,name)); if(value!==undefined)files[name]=value;
   }
   try{for(const entry of await readdir(base,{withFileTypes:true}))if(entry.isFile()&&entry.name.toLowerCase().endsWith('.csproj'))files[entry.name]=await readFile(join(base,entry.name),'utf8')}catch{}

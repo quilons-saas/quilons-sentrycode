@@ -43,6 +43,8 @@ export async function discoverServices(root: string, config: SentryCodeConfig): 
         const names = await readdir(abs);
         if (names.some((name) => name.toLowerCase().endsWith('.csproj'))) kind = 'dotnet';
         else if (names.some((name) => ['cmakelists.txt','conanfile.txt','conanfile.py','conan.lock','vcpkg.json','vcpkg-lock.json'].includes(name.toLowerCase()))) kind = 'cpp';
+        else if (names.some((name) => name.toLowerCase()==='cargo.toml' || name.toLowerCase()==='cargo.lock')) kind = 'rust';
+        else if (names.some((name) => name.toLowerCase()==='go.mod' || name.toLowerCase()==='go.sum')) kind = 'go';
       } catch {}
     }
     services.push({ name: serviceRoot ? basename(serviceRoot) : basename(root), root: serviceRoot, kind });

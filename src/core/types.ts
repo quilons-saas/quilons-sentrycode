@@ -6,7 +6,7 @@ export type ScannerExecutionStatus = 'success' | 'failed' | 'skipped';
 export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
 export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
 export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
-export type SastLanguage = 'javascript' | 'typescript' | 'python' | 'java' | 'csharp' | 'c' | 'cpp';
+export type SastLanguage = 'javascript' | 'typescript' | 'python' | 'java' | 'csharp' | 'c' | 'cpp' | 'rust' | 'go';
 export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'gerrit' | 'generic' | 'local';
 export type ScanMode = 'full' | 'incremental';
 export type AutomotiveStandard = 'misra-c' | 'misra-cpp' | 'autosar-cpp';
@@ -100,7 +100,7 @@ export interface CiContext {
 export interface ServiceComponent {
   name: string;
   root: string;
-  kind: 'node' | 'python' | 'java' | 'dotnet' | 'cpp' | 'generic';
+  kind: 'node' | 'python' | 'java' | 'dotnet' | 'cpp' | 'rust' | 'go' | 'generic';
 }
 
 export interface IncrementalPlan {
@@ -136,7 +136,7 @@ export interface Waiver {
 }
 
 export interface DependencyComponent {
-  ecosystem: 'npm' | 'pypi' | 'maven' | 'nuget' | 'conan' | 'vcpkg';
+  ecosystem: 'npm' | 'pypi' | 'maven' | 'nuget' | 'conan' | 'vcpkg' | 'cargo' | 'go';
   name: string;
   version: string;
   direct: boolean;
