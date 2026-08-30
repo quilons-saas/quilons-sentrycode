@@ -56,7 +56,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
     defaultFormat: 'cyclonedx'
   },
   sast: { enabled: true, languages: ['javascript', 'typescript', 'python'], external: { enabled: false, command: '', args: [], sarifFile: '.sentrycode/external-sast.sarif', timeoutMs: 120000 } },
-  gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [], github: { enabled: false, tokenEnv: 'GITHUB_TOKEN', apiBaseUrl: 'https://api.github.com', requireProtectedBranch: true, minimumApprovals: 1, requireStatusChecks: true } },
+  gitAssurance: { enabled: true, requireCleanTree: false, requireSignedCommit: false, allowedEmailDomains: [], github: { enabled: false, tokenEnv: 'GITHUB_TOKEN', apiBaseUrl: 'https://api.github.com', requireProtectedBranch: true, minimumApprovals: 1, requireStatusChecks: true }, gerrit: { enabled: false, apiBaseUrl: '', authMode: 'bearer', tokenEnv: 'SENTRYCODE_GERRIT_TOKEN', usernameEnv: 'SENTRYCODE_GERRIT_USERNAME', passwordEnv: 'SENTRYCODE_GERRIT_PASSWORD', requiredLabels: { 'Code-Review': 2, Verified: 1 }, publishReview: true, voteLabel: 'Verified', passVote: 1, warnVote: 0, failVote: -1, notify: 'OWNER_REVIEWERS', failClosed: true, timeoutMs: 15000 } },
   provenance: { enabled: true, artifactPaths: [], signingPrivateKeyFile: '', signingPublicKeyFile: '' },
   automotive: { enabled: false, importDirectory: '.sentrycode/automotive/findings', deviationsFile: '.sentrycode/automotive/deviations.json', acceptedStandards: ['misra-c', 'misra-cpp', 'autosar-cpp'], requireDeviationApproval: true, requireInputs: true, evidenceTargets: ['iso-sae-21434', 'unece-r155', 'unece-r156'] },
   ci: { enabled: true, provider: 'auto', annotations: true },

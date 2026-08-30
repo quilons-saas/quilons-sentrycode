@@ -14,6 +14,7 @@ export function detectCi(config: SentryCodeConfig, env: Env = process.env): CiCo
   else if (env.GITHUB_ACTIONS === 'true') provider = 'github';
   else if (env.GITLAB_CI === 'true') provider = 'gitlab';
   else if (env.TF_BUILD === 'True' || env.TF_BUILD === 'true') provider = 'azure-devops';
+  else if (env.GERRIT_CHANGE_NUMBER || env.GERRIT_PATCHSET_NUMBER || env.GERRIT_REFSPEC) provider = 'gerrit';
   else if (env.JENKINS_URL || env.BUILD_ID) provider = 'jenkins';
   else if (env.CI) provider = 'generic';
 
@@ -42,6 +43,17 @@ export function detectCi(config: SentryCodeConfig, env: Env = process.env): CiCo
     assign(ctx,'repository',nonEmpty(env.BUILD_REPOSITORY_NAME));
     assign(ctx,'buildId',nonEmpty(env.BUILD_BUILDID));
     assign(ctx,'jobId',nonEmpty(env.SYSTEM_JOBID));
+  } else if (provider === 'gerrit') {
+    ctx.pullRequest = true;
+    assign(ctx,'baseRef',nonEmpty(env.GERRIT_BRANCH));
+    assign(ctx,'headRef',nonEmpty(env.GERRIT_PATCHSET_REVISION) ?? nonEmpty(env.GIT_COMMIT));
+    assign(ctx,'branch',nonEmpty(env.GERRIT_BRANCH));
+    assign(ctx,'repository',nonEmpty(env.GERRIT_PROJECT));
+    assign(ctx,'buildId',nonEmpty(env.BUILD_ID));
+    assign(ctx,'jobId',nonEmpty(env.BUILD_TAG));
+    const changeNumber=nonEmpty(env.GERRIT_CHANGE_NUMBER); if(changeNumber) ctx.changeNumber=changeNumber;
+    const patchsetNumber=nonEmpty(env.GERRIT_PATCHSET_NUMBER); if(patchsetNumber) ctx.patchsetNumber=patchsetNumber;
+    const revision=nonEmpty(env.GERRIT_PATCHSET_REVISION) ?? nonEmpty(env.GIT_COMMIT); if(revision) ctx.revision=revision;
   } else if (provider === 'jenkins') {
     ctx.pullRequest = Boolean(env.CHANGE_ID);
     assign(ctx,'baseRef',nonEmpty(env.CHANGE_TARGET));

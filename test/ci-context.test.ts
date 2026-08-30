@@ -22,3 +22,21 @@ test('explicit CI provider overrides auto detection', () => {
   const ci=detectCi(config,{ GITHUB_ACTIONS:'true' });
   assert.equal(ci.provider,'generic');
 });
+
+test('detects Gerrit change and patchset context', () => {
+  const ci = detectCi(DEFAULT_CONFIG, {
+    GERRIT_CHANGE_NUMBER:'1234',
+    GERRIT_PATCHSET_NUMBER:'7',
+    GERRIT_PATCHSET_REVISION:'abc123',
+    GERRIT_BRANCH:'main',
+    GERRIT_PROJECT:'acme/widget',
+    GERRIT_REFSPEC:'refs/changes/34/1234/7'
+  });
+  assert.equal(ci.provider,'gerrit');
+  assert.equal(ci.pullRequest,true);
+  assert.equal(ci.changeNumber,'1234');
+  assert.equal(ci.patchsetNumber,'7');
+  assert.equal(ci.revision,'abc123');
+  assert.equal(ci.repository,'acme/widget');
+  assert.equal(ci.baseRef,'main');
+});

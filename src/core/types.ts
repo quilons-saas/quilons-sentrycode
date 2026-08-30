@@ -7,7 +7,7 @@ export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
 export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
 export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
 export type SastLanguage = 'javascript' | 'typescript' | 'python';
-export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'generic' | 'local';
+export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'gerrit' | 'generic' | 'local';
 export type ScanMode = 'full' | 'incremental';
 export type AutomotiveStandard = 'misra-c' | 'misra-cpp' | 'autosar-cpp';
 export type AutomotiveEvidenceTarget = 'iso-sae-21434' | 'unece-r155' | 'unece-r156';
@@ -92,6 +92,9 @@ export interface CiContext {
   repository?: string;
   buildId?: string;
   jobId?: string;
+  changeNumber?: string;
+  patchsetNumber?: string;
+  revision?: string;
 }
 
 export interface ServiceComponent {
@@ -319,6 +322,23 @@ export interface SentryCodeConfig {
       requireProtectedBranch: boolean;
       minimumApprovals: number;
       requireStatusChecks: boolean;
+    };
+    gerrit: {
+      enabled: boolean;
+      apiBaseUrl: string;
+      authMode: 'bearer' | 'basic';
+      tokenEnv: string;
+      usernameEnv: string;
+      passwordEnv: string;
+      requiredLabels: Record<string, number>;
+      publishReview: boolean;
+      voteLabel: string;
+      passVote: number;
+      warnVote: number;
+      failVote: number;
+      notify: 'NONE' | 'OWNER' | 'OWNER_REVIEWERS' | 'ALL';
+      failClosed: boolean;
+      timeoutMs: number;
     };
   };
   provenance: {

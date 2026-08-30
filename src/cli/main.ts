@@ -48,6 +48,7 @@ import { issueComplianceToken } from '../compliance/auth.js';
 import { startWebServer } from '../web/server.js';
 import { createApplicationStateStore } from '../application/factory.js';
 import { openBrowser } from '../web/open-browser.js';
+import { GerritProvider, gerritAuthFromEnv, gerritReviewMessage } from '../git/gerrit-provider.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
@@ -362,6 +363,19 @@ async function publishCompliance(root: string, config: SentryCodeConfig, options
   return publication;
 }
 
+async function publishGerrit(root:string,config:SentryCodeConfig,ci:ReturnType<typeof detectCi>,report:ScanReport,decision:ScanReport['policy']['decision']) {
+  const g=config.gitAssurance.gerrit;
+  if(!g.enabled || !g.publishReview || ci.provider!=='gerrit') return null;
+  if(!ci.changeNumber || !ci.revision){ if(g.failClosed) throw new Error('Gerrit review publication requires change number and patchset revision'); return null; }
+  if(!g.apiBaseUrl) throw new Error('Gerrit review publication requires gitAssurance.gerrit.apiBaseUrl');
+  const provider=new GerritProvider({apiBaseUrl:g.apiBaseUrl,auth:gerritAuthFromEnv(g),timeoutMs:g.timeoutMs});
+  const active=report.policy.findings.filter(item=>!item.waived).map(item=>item.finding);
+  const vote=decision==='FAIL'?g.failVote:decision==='WARN'?g.warnVote:g.passVote;
+  const result=await provider.publishReview({changeNumber:ci.changeNumber,revision:ci.revision,message:gerritReviewMessage(decision,active),findings:active,label:g.voteLabel,vote,notify:g.notify});
+  await appendAuditEvent(root,config.integrity.auditLogFile,'gerrit.review.published',{changeNumber:ci.changeNumber,revision:ci.revision,decision,label:g.voteLabel,vote,findingCount:active.length},undefined,config.integrity.evidenceSigningPrivateKeyFile||undefined);
+  return result;
+}
+
 async function main(): Promise<number> {
   let options: CliOptions | 'help';
   try { options = parseArgs(process.argv.slice(2)); }
@@ -654,6 +668,7 @@ async function main(): Promise<number> {
       if (options.output) console.log(`Release report written: ${await writeOutput(repository.root, options.output, rendered)}`);
       else process.stdout.write(rendered);
       if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+      await publishGerrit(repository.root,config,ciContext,report,release.decision.decision);
       if (release.decision.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
         await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
       }
@@ -667,6 +682,7 @@ async function main(): Promise<number> {
       else { console.error('--output requires --format json or sarif for scan/check/policy evaluate'); return EXIT_CODES.CONFIGURATION_FAILURE; }
     } else process.stdout.write(rendered);
     if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+    await publishGerrit(repository.root,config,ciContext,report,report.policy.decision);
     if (report.policy.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
       await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
     }

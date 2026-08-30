@@ -363,3 +363,7 @@ npm run acceptance:docker
 ```
 
 This uses an isolated Compose project with temporary secrets and volumes, validates readiness, authentication/RBAC, PostgreSQL-backed administration, restart persistence, operational backup/retention, diagnostics, Automotive status and audit capture, and removes the acceptance deployment afterward. See `docs/on-prem/STANDALONE_ACCEPTANCE.md`.
+
+## Gerrit
+
+SentryCode includes first-class Gerrit change/patchset support: Gerrit CI context detection, REST authentication, required review-label enforcement, inline finding publication, summary review publication, and configurable Gerrit voting. Configuration and CI examples are in `docs/integrations/GERRIT.md` and `integrations/gerrit/`.
