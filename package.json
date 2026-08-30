@@ -17,7 +17,8 @@
     "ui",
     "migrations",
     "deploy",
-    "Dockerfile"
+    "Dockerfile",
+    "scripts/acceptance"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -26,7 +27,8 @@
     "start": "npm run build && node dist/cli/main.js",
     "prepack": "npm run check && npm run test && npm run build",
     "package:smoke": "npm run check && npm test && npm run build && node scripts/package-smoke.mjs",
-    "release:verify": "npm run package:smoke"
+    "release:verify": "npm run package:smoke",
+    "acceptance:docker": "node scripts/acceptance/standalone-docker.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -50,6 +50,6 @@ export class PostgresApplicationStateStore implements ApplicationStateStore {
 
 export async function createPostgresApplicationStateStore(connectionString: string): Promise<PostgresApplicationStateStore> {
   const pg = await import('pg');
-  const pool = new pg.Pool({ connectionString, max: 10, application_name: 'quilons-sentrycode' });
+  const pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5_000, idleTimeoutMillis: 30_000, application_name: 'quilons-sentrycode' });
   return new PostgresApplicationStateStore(pool);
 }

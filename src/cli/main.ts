@@ -370,6 +370,58 @@ async function main(): Promise<number> {
 
   try {
     await stat(options.path);
+    const standaloneRoot = resolve(options.path);
+
+    if (options.command === 'database-migrate' || options.command === 'database-status') {
+      const store = await createApplicationStateStore();
+      try {
+        if (options.command === 'database-migrate') {
+          const version = await store.migrate();
+          process.stdout.write(`SentryCode PostgreSQL schema migrated to version ${version}\n`);
+          return EXIT_CODES.PASS;
+        }
+        const status = await store.status();
+        const rendered = options.format === 'json' ? `${JSON.stringify(status, null, 2)}\n` : `${status.connected ? 'PASS' : 'FAIL'} PostgreSQL application state: ${status.detail}${status.schemaVersion === null ? '' : ` (schema ${status.schemaVersion})`}\n`;
+        process.stdout.write(rendered);
+        return status.connected ? EXIT_CODES.PASS : EXIT_CODES.RUNTIME_FAILURE;
+      } finally { await store.close(); }
+    }
+
+    if (options.command === 'ui' || options.command === 'serve') {
+      let config;
+      try { config = await loadConfig(standaloneRoot, options.config); }
+      catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+
+      const configPath = options.config ?? '.sentrycode/config.json';
+      if (config.integrity.requireSignedConfig) {
+        if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+        const ok = await verifyFile(standaloneRoot, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
+        if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      }
+
+      const configuredTenant = options.tenant || config.compliance.tenant || config.policy.context.tenant || '';
+      const configuredProject = options.project || config.compliance.project || config.policy.context.project || '';
+      const identity = configuredTenant && configuredProject ? complianceIdentity(configuredTenant, configuredProject) : null;
+      const host = options.host ?? '127.0.0.1';
+      const port = options.port ?? 7787;
+      const token = process.env.SENTRYCODE_UI_TOKEN ?? '';
+      const adminToken = process.env.SENTRYCODE_UI_ADMIN_TOKEN ?? '';
+      const running = await startWebServer(standaloneRoot, config, identity, { host, port, ...(token ? { token } : {}), ...(adminToken ? { adminToken } : {}) });
+      process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
+      if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
+      await new Promise<void>((resolveShutdown) => {
+        let closing = false;
+        const shutdown = () => {
+          if (closing) return;
+          closing = true;
+          running.server.close(() => resolveShutdown());
+        };
+        process.once('SIGTERM', shutdown);
+        process.once('SIGINT', shutdown);
+      });
+      return EXIT_CODES.PASS;
+    }
+
     const repository = await resolveRepository(options.path);
 
     if (options.command === 'dependencies-diff') {
@@ -391,45 +443,6 @@ async function main(): Promise<number> {
       if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
       const ok = await verifyFile(repository.root, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
       if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
-    }
-
-    if (options.command === 'ui' || options.command === 'serve') {
-      const configuredTenant = options.tenant || config.compliance.tenant || config.policy.context.tenant || '';
-      const configuredProject = options.project || config.compliance.project || config.policy.context.project || '';
-      const identity = configuredTenant && configuredProject ? complianceIdentity(configuredTenant, configuredProject) : null;
-      const host = options.host ?? '127.0.0.1';
-      const port = options.port ?? 7787;
-      const token = process.env.SENTRYCODE_UI_TOKEN ?? '';
-      const adminToken = process.env.SENTRYCODE_UI_ADMIN_TOKEN ?? '';
-      const running = await startWebServer(repository.root, config, identity, { host, port, ...(token ? { token } : {}), ...(adminToken ? { adminToken } : {}) });
-      process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
-      if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
-      await new Promise<void>((resolveShutdown) => {
-        let closing = false;
-        const shutdown = () => {
-          if (closing) return;
-          closing = true;
-          running.server.close(() => resolveShutdown());
-        };
-        process.once('SIGTERM', shutdown);
-        process.once('SIGINT', shutdown);
-      });
-      return EXIT_CODES.PASS;
-    }
-
-    if (options.command === 'database-migrate' || options.command === 'database-status') {
-      const store = await createApplicationStateStore();
-      try {
-        if (options.command === 'database-migrate') {
-          const version = await store.migrate();
-          process.stdout.write(`SentryCode PostgreSQL schema migrated to version ${version}\n`);
-          return EXIT_CODES.PASS;
-        }
-        const status = await store.status();
-        const rendered = options.format === 'json' ? `${JSON.stringify(status, null, 2)}\n` : `${status.connected ? 'PASS' : 'FAIL'} PostgreSQL application state: ${status.detail}${status.schemaVersion === null ? '' : ` (schema ${status.schemaVersion})`}\n`;
-        process.stdout.write(rendered);
-        return status.connected ? EXIT_CODES.PASS : EXIT_CODES.RUNTIME_FAILURE;
-      } finally { await store.close(); }
     }
 
     if (options.command === 'hooks-install') {

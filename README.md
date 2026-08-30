@@ -353,3 +353,13 @@ See `docs/on-prem/DOCKER_DEPLOYMENT.md`.
 The server supports local token authentication and optional enterprise OIDC. SentryCode authorization is server-enforced with viewer, engineer, security-admin and administrator roles. OIDC identities must be registered in SentryCode before they receive permissions.
 
 The standalone UI also exposes enterprise diagnostics, automotive evidence status, integration metadata, vulnerability-intelligence status and governed operational actions. PostgreSQL is application-state storage; signed SentryCode evidence remains the evidence authority.
+
+## Standalone production acceptance
+
+After the normal TypeScript, test, build and package checks pass, validate the real two-container standalone deployment on a Docker-capable host:
+
+```sh
+npm run acceptance:docker
+```
+
+This uses an isolated Compose project with temporary secrets and volumes, validates readiness, authentication/RBAC, PostgreSQL-backed administration, restart persistence, operational backup/retention, diagnostics, Automotive status and audit capture, and removes the acceptance deployment afterward. See `docs/on-prem/STANDALONE_ACCEPTANCE.md`.

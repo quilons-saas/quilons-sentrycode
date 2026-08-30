@@ -21,6 +21,15 @@ services:
       dockerfile: Dockerfile
     image: quilons/sentrycode:${SENTRYCODE_IMAGE_TAG:-0.1.0}
     restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     depends_on:
       sentrycode-postgres:
         condition: service_healthy

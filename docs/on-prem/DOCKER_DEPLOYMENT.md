@@ -62,3 +62,7 @@ Repositories registered for administration must be reachable from the SentryCode
 ## Security
 
 The runtime image runs as the non-root `sentrycode` user. The production Compose file exposes only the SentryCode HTTP port and does not publish PostgreSQL. Secrets should be supplied by the deployment environment or secret manager and must not be committed to configuration files.
+
+## Whole-product acceptance
+
+Before accepting a standalone deployment, run `npm run acceptance:docker` from a Docker-capable host. The harness creates an isolated project and temporary volumes, validates the deployed authentication/RBAC and PostgreSQL persistence paths including service restarts, then tears the acceptance environment down. See `STANDALONE_ACCEPTANCE.md`.
