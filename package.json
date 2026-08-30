@@ -28,7 +28,8 @@
     "prepack": "npm run check && npm run test && npm run build",
     "package:smoke": "npm run check && npm test && npm run build && node scripts/package-smoke.mjs",
     "release:verify": "npm run package:smoke",
-    "acceptance:docker": "node scripts/acceptance/standalone-docker.mjs"
+    "acceptance:docker": "node scripts/acceptance/standalone-docker.mjs",
+    "acceptance:market": "npm run check && npm test && npm run build && node scripts/acceptance/market-readiness.mjs"
   },
   "engines": {
     "node": ">=20"

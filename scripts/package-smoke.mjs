@@ -53,6 +53,8 @@ try {
   await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'on-prem', 'DOCKER_DEPLOYMENT.md'));
   await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'on-prem', 'STANDALONE_ACCEPTANCE.md'));
   await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'scripts', 'acceptance', 'standalone-docker.mjs'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'scripts', 'acceptance', 'market-readiness.mjs'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'release', 'MARKET_READINESS_ACCEPTANCE.md'));
 
   const installedCli = join(temp, 'node_modules', '@quilons', 'sentrycode', 'dist', 'cli', 'main.js');
   const result = await execFileAsync(process.execPath, [installedCli, '--help'], {

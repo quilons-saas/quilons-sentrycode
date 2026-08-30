@@ -377,3 +377,17 @@ This uses an isolated Compose project with temporary secrets and volumes, valida
 ## Gerrit
 
 SentryCode includes first-class Gerrit change/patchset support: Gerrit CI context detection, REST authentication, required review-label enforcement, inline finding publication, summary review publication, and configurable Gerrit voting. Configuration and CI examples are in `docs/integrations/GERRIT.md` and `integrations/gerrit/`.
+
+
+## Cross-language market-readiness acceptance
+
+The v0.1 market-readiness gate covers native JavaScript/TypeScript, Python, Java, .NET/C#, C, C++, Rust and Go support together with npm, PyPI, Maven/Gradle, NuGet, Conan, vcpkg, Cargo and Go modules.
+
+Run:
+
+```bash
+npm run acceptance:market
+npm run acceptance:docker
+```
+
+Both gates must pass before a market-ready release. See `docs/release/MARKET_READINESS_ACCEPTANCE.md`.
