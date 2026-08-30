@@ -1,9 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { DependencyComponent, DependencySnapshot } from '../core/types.js';
 
 interface PackageLock {
-  packages?: Record<string, { name?: string; version?: string; dev?: boolean; resolved?: string; license?: string; integrity?: string; dependencies?: Record<string,string> }>;
+  packages?: Record<string, { name?: string; version?: string; dev?: boolean; resolved?: string; license?: string; integrity?: string; dependencies?: Record<string,string>; devDependencies?: Record<string,string>; optionalDependencies?: Record<string,string> }>;
   dependencies?: Record<string, { version?: string; dev?: boolean; resolved?: string; integrity?: string; requires?: Record<string,string> }>;
 }
 
@@ -56,6 +56,12 @@ function parsePackageLock(content: string): DependencyComponent[] {
   const lock = JSON.parse(content) as PackageLock;
   const components: DependencyComponent[] = [];
   if (lock.packages) {
+    const root = lock.packages[''];
+    const directNames = new Set([
+      ...Object.keys(root?.dependencies ?? {}),
+      ...Object.keys(root?.devDependencies ?? {}),
+      ...Object.keys(root?.optionalDependencies ?? {})
+    ].map((name)=>name.toLowerCase()));
     const byPath = new Map<string, { name:string; version:string; purl:string }>();
     for (const [packagePath, entry] of Object.entries(lock.packages)) {
       if (!packagePath || !entry.version) continue;
@@ -73,7 +79,7 @@ function parsePackageLock(content: string): DependencyComponent[] {
         if(dep)dependencies.push(dep.purl);
       }
       const hashes=sriHashes(entry.integrity);
-      components.push({ ecosystem:'npm', name:resolved.name, version:resolved.version, direct:packagePath.startsWith('node_modules/')&&!packagePath.slice('node_modules/'.length).includes('/node_modules/'), dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:resolved.purl, packagePath, ...(entry.license?{license:entry.license}:{}), ...(hashes?{hashes}:{}), ...(dependencies.length?{dependencies}:{}) });
+      components.push({ ecosystem:'npm', name:resolved.name, version:resolved.version, direct:directNames.has(resolved.name.toLowerCase()), dev:Boolean(entry.dev), source:entry.resolved??'package-lock.json', purl:resolved.purl, packagePath, ...(entry.license?{license:entry.license}:{}), ...(hashes?{hashes}:{}), ...(dependencies.length?{dependencies}:{}) });
     }
   } else if (lock.dependencies) {
     const purls=new Map(Object.entries(lock.dependencies).filter(([,v])=>v.version).map(([name,v])=>[name,npmPurl(name,v.version!)]));
@@ -98,7 +104,21 @@ function parsePyproject(content: string): DependencyComponent[] {
   for(const raw of content.split(/\r?\n/)){const line=raw.trim();if(line==='dependencies = ['||line.startsWith('dependencies=[')){inDependencies=true;continue;}if(inDependencies&&line.startsWith(']')){inDependencies=false;continue;}if(!inDependencies)continue;const quoted=line.match(/["']([^"']+)["']/)?.[1];if(!quoted)continue;const match=quoted.match(/^([A-Za-z0-9_.-]+)\s*==\s*([^\s;]+)$/);if(match)components.push({ecosystem:'pypi',name:match[1]!,version:match[2]!,direct:true,dev:false,source:'pyproject.toml',purl:pypiPurl(match[1]!,match[2]!)})}
   return components;
 }
-function pyprojectDependencyNames(content:string|undefined):Set<string>{const out=new Set<string>();if(!content)return out;let inDependencies=false;for(const raw of content.split(/\r?\n/)){const line=raw.trim();if(/^dependencies\s*=\s*\[$/.test(line)){inDependencies=true;continue}if(inDependencies&&line.startsWith(']')){inDependencies=false;continue}if(!inDependencies)continue;const quoted=line.match(/["']([^"']+)["']/)?.[1];const name=quoted?.match(/^([A-Za-z0-9_.-]+)/)?.[1];if(name)out.add(name.toLowerCase())}return out;}
+function pyprojectDependencyNames(content:string|undefined):Set<string>{
+  const out=new Set<string>(); if(!content)return out; let section=''; let inPep621=false;
+  const add=(spec:string)=>{const name=spec.trim().match(/^([A-Za-z0-9_.-]+)/)?.[1];if(name)out.add(name.toLowerCase());};
+  for(const raw of content.split(/\r?\n/)){
+    const line=raw.trim(); if(!line||line.startsWith('#'))continue;
+    const header=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase(); if(header){section=header;inPep621=false;continue;}
+    if((section==='project'||section==='dependency-groups')&&/^dependencies\s*=\s*\[$/.test(line)){inPep621=true;continue;}
+    if(inPep621&&line.startsWith(']')){inPep621=false;continue;}
+    if(inPep621){const quoted=line.match(/["']([^"']+)["']/)?.[1];if(quoted)add(quoted);continue;}
+    if(section==='tool.poetry.dependencies'||section==='tool.poetry.group.dev.dependencies'||section.startsWith('tool.poetry.group.')&&section.endsWith('.dependencies')){
+      const m=line.match(/^([A-Za-z0-9_.-]+)\s*=/);if(m&&m[1]!.toLowerCase()!=='python')out.add(m[1]!.toLowerCase());
+    }
+  }
+  return out;
+}
 function parsePoetryLock(content:string,directNames=new Set<string>()):DependencyComponent[]{
   const out:DependencyComponent[]=[]; for(const block of content.split(/\n(?=\[\[package\]\])/g)){if(!block.includes('[[package]]'))continue;const name=block.match(/^name\s*=\s*"([^"]+)"/m)?.[1];const version=block.match(/^version\s*=\s*"([^"]+)"/m)?.[1];const category=block.match(/^category\s*=\s*"([^"]+)"/m)?.[1];if(name&&version)out.push({ecosystem:'pypi',name,version,direct:directNames.has(name.toLowerCase()),dev:category==='dev',source:'poetry.lock',purl:pypiPurl(name,version)});} return out;
 }
@@ -116,13 +136,34 @@ function pomProperties(xml:string):Record<string,string>{
 function resolveMavenVersion(value:string|undefined, props:Record<string,string>):string|undefined{
   if(!value)return undefined; const m=value.match(/^\$\{([^}]+)\}$/); return m ? props[m[1]!] : value;
 }
-function parsePom(content:string, source='pom.xml'):DependencyComponent[]{
-  const props=pomProperties(content); const components:DependencyComponent[]=[]; const managed=new Map<string,string>();
+interface MavenBom { coordinate:string; managed:Map<string,string>; imports:string[]; }
+function pomCoordinates(content:string):string|undefined{
+  const clean=content.replace(/<dependencies>[\s\S]*?<\/dependencies>/gi,'').replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/gi,'');
+  const artifact=xmlValue(clean,'artifactId'); if(!artifact)return undefined;
+  const parent=clean.match(/<parent>([\s\S]*?)<\/parent>/i)?.[1]??'';
+  const withoutParent=clean.replace(/<parent>[\s\S]*?<\/parent>/i,'');
+  const group=xmlValue(withoutParent,'groupId')??xmlValue(parent,'groupId');
+  const version=xmlValue(withoutParent,'version')??xmlValue(parent,'version');
+  return group&&version?`${group}:${artifact}:${version}`:undefined;
+}
+function pomManagement(content:string):MavenBom{
+  const props=pomProperties(content); const managed=new Map<string,string>(); const imports:string[]=[];
   const management=content.match(/<dependencyManagement>([\s\S]*?)<\/dependencyManagement>/i)?.[1]??'';
   for(const m of management.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)){
     const x=m[1]!; const group=xmlValue(x,'groupId'); const artifact=xmlValue(x,'artifactId'); const version=resolveMavenVersion(xmlValue(x,'version'),props);
-    if(group&&artifact&&version) managed.set(`${group}:${artifact}`,version);
+    if(!group||!artifact||!version)continue;
+    if((xmlValue(x,'type')??'').toLowerCase()==='pom'&&(xmlValue(x,'scope')??'').toLowerCase()==='import')imports.push(`${group}:${artifact}:${version}`);
+    else managed.set(`${group}:${artifact}`,version);
   }
+  return {coordinate:pomCoordinates(content)??'',managed,imports};
+}
+function resolveBomManagement(bom:MavenBom,local:Map<string,MavenBom>,seen=new Set<string>()):Map<string,string>{
+  const out=new Map<string,string>();
+  for(const coordinate of bom.imports){if(seen.has(coordinate))continue;const imported=local.get(coordinate);if(!imported)continue;const next=new Set(seen);next.add(coordinate);for(const [k,v] of resolveBomManagement(imported,local,next))out.set(k,v);for(const [k,v] of imported.managed)out.set(k,v);}
+  for(const [k,v] of bom.managed)out.set(k,v); return out;
+}
+function parsePom(content:string, source='pom.xml', localBoms=new Map<string,MavenBom>()):DependencyComponent[]{
+  const props=pomProperties(content); const components:DependencyComponent[]=[]; const own=pomManagement(content); const managed=resolveBomManagement(own,localBoms);
   const directContent=content.replace(/<dependencyManagement>[\s\S]*?<\/dependencyManagement>/gi,'');
   for(const m of directContent.matchAll(/<dependency>([\s\S]*?)<\/dependency>/gi)){
     const x=m[1]!; const group=xmlValue(x,'groupId'); const artifact=xmlValue(x,'artifactId'); const scope=xmlValue(x,'scope')??'compile';
@@ -214,19 +255,19 @@ function parseVcpkgStatus(content:string):DependencyComponent[]{
 }
 
 
-function cargoDependencyNames(content:string):{runtime:Set<string>;dev:Set<string>}{
-  const runtime=new Set<string>(),dev=new Set<string>(); let section='';
-  for(const raw of content.split(/\r?\n/)){
-    const line=raw.trim(); if(!line||line.startsWith('#'))continue;
-    const s=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase(); if(s){section=s;continue}
-    if(!['dependencies','dev-dependencies','build-dependencies'].includes(section))continue;
-    const m=line.match(/^([A-Za-z0-9_.-]+)\s*=/); if(!m)continue;
-    (section==='dev-dependencies'||section==='build-dependencies'?dev:runtime).add(m[1]!.toLowerCase());
-  }
+function cargoWorkspaceDependencies(content:string):Map<string,string>{
+  const out=new Map<string,string>(); let section='';
+  for(const raw of content.split(/\r?\n/)){const line=raw.trim();const header=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase();if(header){section=header;continue}if(section!=='workspace.dependencies')continue;const m=line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.*)$/);if(!m)continue;const alias=m[1]!,spec=m[2]!;const actual=spec.match(/\bpackage\s*=\s*["']([^"']+)["']/)?.[1]??alias;out.set(alias.toLowerCase(),actual.toLowerCase());}
+  return out;
+}
+function cargoDependencyNames(manifests:string[]):{runtime:Set<string>;dev:Set<string>}{
+  const runtime=new Set<string>(),dev=new Set<string>(); const workspace=new Map<string,string>();
+  for(const content of manifests)for(const [k,v] of cargoWorkspaceDependencies(content))workspace.set(k,v);
+  for(const content of manifests){let section='';for(const raw of content.split(/\r?\n/)){const line=raw.trim();if(!line||line.startsWith('#'))continue;const h=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase();if(h){section=h;continue}if(!['dependencies','dev-dependencies','build-dependencies'].includes(section))continue;const m=line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.*)$/);if(!m)continue;const alias=m[1]!,spec=m[2]!;const actual=(spec.match(/\bpackage\s*=\s*["']([^"']+)["']/)?.[1]??(spec.includes('workspace')?workspace.get(alias.toLowerCase()):undefined)??alias).toLowerCase();(section==='dev-dependencies'||section==='build-dependencies'?dev:runtime).add(actual);}}
   return {runtime,dev};
 }
-function parseCargoLock(content:string,manifest?:string):DependencyComponent[]{
-  const direct=manifest?cargoDependencyNames(manifest):{runtime:new Set<string>(),dev:new Set<string>()};
+function parseCargoLock(content:string,manifests:string[]=[]):DependencyComponent[]{
+  const direct=manifests.length?cargoDependencyNames(manifests):{runtime:new Set<string>(),dev:new Set<string>()};
   const raw:Array<{name:string;version:string;source:string;checksum?:string;deps:Array<{name:string;version?:string}>}>=[];
   for(const block of content.split(/\n(?=\[\[package\]\])/g)){
     if(!block.includes('[[package]]'))continue; const name=block.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1]; const version=block.match(/^\s*version\s*=\s*"([^"]+)"/m)?.[1];
@@ -239,7 +280,7 @@ function parseCargoLock(content:string,manifest?:string):DependencyComponent[]{
   return raw.map(x=>{const key=x.name.toLowerCase();const dependencies=x.deps.map(d=>lookup(d.name,d.version)).filter((v):v is typeof raw[number]=>Boolean(v)).map(d=>cargoPurl(d.name,d.version));return {ecosystem:'cargo' as const,name:x.name,version:x.version,direct:direct.runtime.has(key)||direct.dev.has(key),dev:direct.dev.has(key)&&!direct.runtime.has(key),source:x.source,purl:cargoPurl(x.name,x.version),...(x.checksum?{hashes:[{algorithm:'SHA-256' as const,value:x.checksum}]}:{}),...(dependencies.length?{dependencies}:{})};});
 }
 function parseCargoTomlExact(content:string):DependencyComponent[]{
-  const names=cargoDependencyNames(content); const out:DependencyComponent[]=[]; let section='';
+  const out:DependencyComponent[]=[]; let section='';
   for(const raw of content.split(/\r?\n/)){
     const line=raw.trim(); const s=line.match(/^\[([^\]]+)\]$/)?.[1]?.toLowerCase(); if(s){section=s;continue}
     if(!['dependencies','dev-dependencies','build-dependencies'].includes(section))continue;
@@ -248,43 +289,47 @@ function parseCargoTomlExact(content:string):DependencyComponent[]{
   }
   return out;
 }
-function parseGoMod(content:string):DependencyComponent[]{
-  const required:Array<{name:string;version:string;direct:boolean}>=[]; const excluded=new Set<string>(); const replacements=new Map<string,{name:string;version?:string;local:boolean}>(); let mode:''|'require'|'exclude'|'replace'='';
+function goSumHashes(content:string|undefined):Map<string,DependencyComponent['hashes']>{
+  const out=new Map<string,DependencyComponent['hashes']>();if(!content)return out;
+  for(const raw of content.split(/\r?\n/)){const m=raw.trim().match(/^(\S+)\s+(v\S+)\s+h1:([A-Za-z0-9+/=]+)$/);if(!m||m[2]!.endsWith('/go.mod'))continue;try{out.set(`${m[1]}@${m[2]}`,[{algorithm:'SHA-256',value:Buffer.from(m[3]!,'base64').toString('hex')}]);}catch{}}
+  return out;
+}
+function parseGoMod(content:string,sumContent?:string,source='go.mod'):DependencyComponent[]{
+  const required:Array<{name:string;version:string;direct:boolean}>=[]; const excluded=new Set<string>(); const replacements=new Map<string,{name:string;oldVersion?:string;version?:string;local:boolean}>(); let mode:''|'require'|'exclude'|'replace'='';
   for(const raw of content.split(/\r?\n/)){
     const line=raw.trim(); if(!line||line.startsWith('//'))continue;
     const open=line.match(/^(require|exclude|replace)\s*\($/); if(open){mode=open[1] as typeof mode;continue} if(mode&&line===')'){mode='';continue}
     const body=mode?line:line.replace(/^(require|exclude|replace)\s+/,''); const directive=mode||line.match(/^(require|exclude|replace)\s+/)?.[1] as typeof mode; if(!directive)continue;
-    if(directive==='require'){const m=body.match(/^([^\s]+)\s+(v[^\s]+)(?:\s+\/\/\s*indirect)?$/);if(m)required.push({name:m[1]!,version:m[2]!,direct:!/\/\/\s*indirect/.test(raw)});}
-    else if(directive==='exclude'){const m=body.match(/^([^\s]+)\s+(v[^\s]+)$/);if(m)excluded.add(`${m[1]}@${m[2]}`);}
-    else {const m=body.match(/^([^\s]+)(?:\s+v[^\s]+)?\s+=>\s+([^\s]+)(?:\s+(v[^\s]+))?$/);if(m)replacements.set(m[1]!,{name:m[2]!,...(m[3]?{version:m[3]}:{}),local:!m[3]});}
+    if(directive==='require'){const m=body.match(/^(\S+)\s+(v\S+)(?:\s+\/\/\s*indirect)?$/);if(m)required.push({name:m[1]!,version:m[2]!,direct:!/\/\/\s*indirect/.test(raw)});}
+    else if(directive==='exclude'){const m=body.match(/^(\S+)\s+(v\S+)$/);if(m)excluded.add(`${m[1]}@${m[2]}`);}
+    else {const m=body.match(/^(\S+?)(?:\s+(v\S+))?\s+=>\s+(\S+)(?:\s+(v\S+))?$/);if(m){const key=`${m[1]}@${m[2]??'*'}`;replacements.set(key,{name:m[3]!,...(m[2]?{oldVersion:m[2]}:{}),...(m[4]?{version:m[4]}:{}),local:!m[4]});}}
   }
-  const out:DependencyComponent[]=[];
-  for(const req of required){if(excluded.has(`${req.name}@${req.version}`))continue;const replacement=replacements.get(req.name);const name=replacement?.name??req.name;const version=replacement?.version??req.version;const source=replacement?`go.mod replace ${req.name} => ${replacement.name}${replacement.version?` ${replacement.version}`:''}`:'go.mod';out.push({ecosystem:'go',name,version,direct:req.direct,dev:false,source,purl:goPurl(name,version),...(replacement?{replacedFrom:`${req.name}@${req.version}`}:{})});}
+  const sums=goSumHashes(sumContent); const out:DependencyComponent[]=[];
+  for(const req of required){if(excluded.has(`${req.name}@${req.version}`))continue;const replacement=replacements.get(`${req.name}@${req.version}`)??replacements.get(`${req.name}@*`);const name=replacement?.name??req.name;const version=replacement?.version??req.version;const hashes=sums.get(`${name}@${version}`)??(!replacement?sums.get(`${req.name}@${req.version}`):undefined);const detail=replacement?`${source} replace ${req.name}${replacement.oldVersion?` ${replacement.oldVersion}`:''} => ${replacement.name}${replacement.version?` ${replacement.version}`:''}`:source;out.push({ecosystem:'go',name,version,direct:req.direct,dev:false,source:detail,purl:goPurl(name,version),...(replacement?{replacedFrom:`${req.name}@${req.version}`}:{}) ,...(hashes?{hashes}:{})});}
   return out;
 }
 
+
 export function parseDependencyFiles(files:Record<string,string>,generatedAt:string):DependencySnapshot{
-  const c:DependencyComponent[]=[]; const entries=Object.entries(files);
+  const c:DependencyComponent[]=[]; const entries=Object.entries(files).map(([name,content])=>[name.replace(/\\/g,'/'),content] as const);
   const byBase=(base:string)=>entries.filter(([name])=>basename(name).toLowerCase()===base.toLowerCase());
+  const sameDir=(path:string,base:string)=>entries.find(([name])=>dirname(name)===dirname(path)&&basename(name).toLowerCase()===base.toLowerCase())?.[1];
   for(const [name,content] of byBase('package-lock.json'))c.push(...parsePackageLock(content).map(x=>({...x,source:x.source==='package-lock.json'?name:x.source})));
   for(const [name,content] of entries.filter(([n])=>/requirements(?:\.[^/]+)?\.txt$/i.test(basename(n))))c.push(...parseRequirements(content,name));
-  for(const [,content] of byBase('pyproject.toml'))c.push(...parsePyproject(content));
-  const pythonDirect=pyprojectDependencyNames(byBase('pyproject.toml')[0]?.[1]);
-  for(const [,content] of byBase('poetry.lock'))c.push(...parsePoetryLock(content,pythonDirect));
-  for(const [,content] of byBase('uv.lock'))c.push(...parseUvLock(content,pythonDirect));
-  for(const [name,content] of byBase('pom.xml'))c.push(...parsePom(content,name));
+  for(const [name,content] of byBase('pyproject.toml'))c.push(...parsePyproject(content).map(x=>({...x,source:name})));
+  for(const [name,content] of byBase('poetry.lock'))c.push(...parsePoetryLock(content,pyprojectDependencyNames(sameDir(name,'pyproject.toml'))).map(x=>({...x,source:name})));
+  for(const [name,content] of byBase('uv.lock'))c.push(...parseUvLock(content,pyprojectDependencyNames(sameDir(name,'pyproject.toml'))).map(x=>({...x,source:name})));
+  const localBoms=new Map<string,MavenBom>();for(const [,content] of byBase('pom.xml')){const bom=pomManagement(content);if(bom.coordinate)localBoms.set(bom.coordinate,bom);}for(const [name,content] of byBase('pom.xml'))c.push(...parsePom(content,name,localBoms));
   for(const [,content] of byBase('gradle.lockfile'))c.push(...parseGradleLock(content));
   for(const [,content] of [...byBase('build.gradle'),...byBase('build.gradle.kts')])c.push(...parseGradleBuild(content));
   for(const [,content] of byBase('packages.lock.json'))c.push(...parseNugetLock(content));
-  for(const [name,content] of entries.filter(([n])=>n.replace(/\\/g,'/').endsWith('obj/project.assets.json')))c.push(...parseProjectAssets(content).map(x=>({...x,source:name})));
-  for(const [,content] of byBase('conanfile.txt'))c.push(...parseConanfileTxt(content));
-  for(const [,content] of byBase('conanfile.py'))c.push(...parseConanfilePy(content));
-  for(const [,content] of byBase('conan.lock'))c.push(...parseConanLock(content));
-  for(const [,content] of byBase('vcpkg.json'))c.push(...parseVcpkgManifest(content));
-  for(const [,content] of byBase('vcpkg-lock.json'))c.push(...parseVcpkgLock(content));
-  for(const [,content] of entries.filter(([n])=>n.replace(/\\/g,'/').endsWith('vcpkg_installed/vcpkg/status')))c.push(...parseVcpkgStatus(content));
-  const cargoManifests=byBase('Cargo.toml').map(([,v])=>v).join('\n'); for(const [,lock] of byBase('Cargo.lock'))c.push(...parseCargoLock(lock,cargoManifests)); if(!byBase('Cargo.lock').length)for(const [,m] of byBase('Cargo.toml'))c.push(...parseCargoTomlExact(m));
-  for(const [,content] of byBase('go.mod'))c.push(...parseGoMod(content));
+  for(const [name,content] of entries.filter(([n])=>n.endsWith('obj/project.assets.json')))c.push(...parseProjectAssets(content).map(x=>({...x,source:name})));
+  for(const [,content] of byBase('conanfile.txt'))c.push(...parseConanfileTxt(content)); for(const [,content] of byBase('conanfile.py'))c.push(...parseConanfilePy(content)); for(const [,content] of byBase('conan.lock'))c.push(...parseConanLock(content));
+  for(const [,content] of byBase('vcpkg.json'))c.push(...parseVcpkgManifest(content)); for(const [,content] of byBase('vcpkg-lock.json'))c.push(...parseVcpkgLock(content)); for(const [,content] of entries.filter(([n])=>n.endsWith('vcpkg_installed/vcpkg/status')))c.push(...parseVcpkgStatus(content));
+  const cargoLocks=byBase('Cargo.lock');
+  for(const [lockPath,lock] of cargoLocks){const root=dirname(lockPath);const manifests=byBase('Cargo.toml').filter(([manifestPath])=>{if(!(manifestPath===`${root}/Cargo.toml`||root==='.'&&manifestPath==='Cargo.toml'||manifestPath.startsWith(`${root}/`)))return false;const nestedLock=cargoLocks.find(([candidate])=>candidate!==lockPath&&manifestPath.startsWith(`${dirname(candidate)}/`));return !nestedLock;}).map(([,content])=>content);c.push(...parseCargoLock(lock,manifests).map(x=>({...x,source:x.source==='Cargo.lock'?lockPath:x.source})));}
+  if(!cargoLocks.length)for(const [,m] of byBase('Cargo.toml'))c.push(...parseCargoTomlExact(m));
+  for(const [name,content] of byBase('go.mod'))c.push(...parseGoMod(content,sameDir(name,'go.sum'),name));
   for(const [name,content] of entries)if(name.toLowerCase().endsWith('.csproj'))c.push(...parseCsproj(content,name));
   const directVcpkg=new Set<string>(); for(const [,content] of byBase('vcpkg.json'))try{const manifest=JSON.parse(content) as {dependencies?:unknown[]};for(const item of manifest.dependencies??[]){if(typeof item==='string')directVcpkg.add(item.toLowerCase());else if(item&&typeof item==='object'&&!Array.isArray(item)&&typeof (item as Record<string,unknown>).name==='string')directVcpkg.add(((item as Record<string,unknown>).name as string).toLowerCase());}}catch{}
   for(let i=0;i<c.length;i++)if(c[i]?.ecosystem==='vcpkg'&&directVcpkg.has(c[i]!.name.toLowerCase()))c[i]={...c[i]!,direct:true};

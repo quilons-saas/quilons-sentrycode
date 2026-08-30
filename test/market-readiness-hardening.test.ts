@@ -56,3 +56,57 @@ test('SBOM emits package hashes, application dependency relationships, and corre
 test('dependency governance enforces denied registries and governed maintenance criteria',async()=>{
   const root=await mkdtemp(join(tmpdir(),'sentrycode-maint-'));try{await writeFile(join(root,'package-lock.json'),JSON.stringify({lockfileVersion:3,packages:{'node_modules/a':{version:'1.0.0',resolved:'https://evil.example/a.tgz'}}}));await mkdir(join(root,'.sentrycode'),{recursive:true});await writeFile(join(root,'.sentrycode/dependency-health.json'),JSON.stringify({packages:{'npm:a':{lastReleaseAt:'2020-01-01T00:00:00.000Z',deprecated:true}}}));const config=structuredClone(DEFAULT_CONFIG);config.dependencies.deniedRegistries=['evil.example'];config.dependencies.maintenance={enabled:true,metadataFile:'.sentrycode/dependency-health.json',maxReleaseAgeDays:365,denyDeprecated:true,requireMetadata:true};config.vulnerabilities.enabled=false;config.licenses.enabled=false;const result=await new DependencyScanner().scan({repository:{root,repository:'x',commitSha:'abc',branch:'main',isDirty:false},config,now:()=>new Date(now)});const rules=new Set(result.findings.map(f=>f.ruleId));assert.equal(rules.has('dependency.registry-denied'),true);assert.equal(rules.has('dependency.deprecated'),true);assert.equal(rules.has('dependency.stale'),true);}finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('npm v3 lockfile directness comes from root dependency metadata, not flattened node_modules placement',()=>{
+  const snap=parseDependencyFiles({'package-lock.json':JSON.stringify({lockfileVersion:3,packages:{'':{dependencies:{direct:'1.0.0'}},'node_modules/direct':{version:'1.0.0',dependencies:{transitive:'2.0.0'}},'node_modules/transitive':{version:'2.0.0'}}})},now);
+  assert.equal(snap.components.find(c=>c.name==='direct')?.direct,true);
+  assert.equal(snap.components.find(c=>c.name==='transitive')?.direct,false);
+});
+
+test('Python lock directness is project-local and recognizes Poetry dependencies',()=>{
+  const snap=parseDependencyFiles({
+    'service-a/pyproject.toml':'[tool.poetry.dependencies]\npython = "^3.12"\nhttpx = "^0.28"\n',
+    'service-a/poetry.lock':'[[package]]\nname = "httpx"\nversion = "0.28.1"\n[[package]]\nname = "shared"\nversion = "1.0.0"\n',
+    'service-b/pyproject.toml':'[project]\ndependencies = [\n  "anyio==4.8.0"\n]\n',
+    'service-b/uv.lock':'[[package]]\nname = "anyio"\nversion = "4.8.0"\n[[package]]\nname = "httpx"\nversion = "0.29.0"\n'
+  },now);
+  const httpx=snap.components.filter(c=>c.name==='httpx');
+  assert.equal(httpx.some(c=>c.source==='service-a/poetry.lock'&&c.direct),true);
+  assert.equal(httpx.some(c=>c.source==='service-b/uv.lock'&&c.direct),false);
+  assert.equal(snap.components.some(c=>c.name==='anyio'&&c.direct),true);
+});
+
+test('independent Cargo workspaces do not contaminate direct dependency classification and workspace aliases resolve package names',()=>{
+  const snap=parseDependencyFiles({
+    'rust-a/Cargo.toml':'[workspace]\nmembers=["member"]\n[workspace.dependencies]\nserde_alias={ package="serde", version="1" }\n',
+    'rust-a/member/Cargo.toml':'[dependencies]\nserde_alias={ workspace=true }\n',
+    'rust-a/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.200"\n[[package]]\nname = "tokio"\nversion = "1.40.0"\n',
+    'rust-b/Cargo.toml':'[dependencies]\ntokio="1"\n',
+    'rust-b/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.200"\n[[package]]\nname = "tokio"\nversion = "1.40.0"\n'
+  },now);
+  const serde=snap.components.find(c=>c.ecosystem==='cargo'&&c.name==='serde');
+  const tokio=snap.components.find(c=>c.ecosystem==='cargo'&&c.name==='tokio');
+  assert.equal(serde?.direct,true);
+  assert.equal(tokio?.direct,true);
+  // uniq merges same package/version across workspaces; each direct flag must originate from its own workspace, never cross-contamination.
+  const isolated=parseDependencyFiles({'rust-a/Cargo.toml':'[dependencies]\nserde="1"\n','rust-a/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.0"\n[[package]]\nname = "tokio"\nversion = "1.0.0"\n','rust-b/Cargo.toml':'[dependencies]\ntokio="1"\n','rust-b/Cargo.lock':'[[package]]\nname = "serde"\nversion = "2.0.0"\n[[package]]\nname = "tokio"\nversion = "2.0.0"\n'},now);
+  assert.equal(isolated.components.find(c=>c.name==='tokio'&&c.version==='1.0.0')?.direct,false);
+  assert.equal(isolated.components.find(c=>c.name==='serde'&&c.version==='2.0.0')?.direct,false);
+});
+
+test('Go replacements are version-specific and go.sum contributes module checksums',()=>{
+  const digest=Buffer.alloc(32,9).toString('base64');
+  const snap=parseDependencyFiles({'go/go.mod':'module x\nrequire (\n example.com/a v1.0.0\n example.com/a2 v2.0.0\n)\nreplace example.com/a v1.0.0 => example.com/fork/a v1.1.0\nreplace example.com/a2 => example.com/fork/a2 v2.1.0\n','go/go.sum':`example.com/fork/a v1.1.0 h1:${digest}\nexample.com/fork/a2 v2.1.0 h1:${digest}\n`},now);
+  const a=snap.components.find(c=>c.name==='example.com/fork/a');const a2=snap.components.find(c=>c.name==='example.com/fork/a2');
+  assert.equal(a?.replacedFrom,'example.com/a@v1.0.0');assert.equal(a2?.replacedFrom,'example.com/a2@v2.0.0');assert.equal(a?.hashes?.[0]?.value,Buffer.alloc(32,9).toString('hex'));
+  const noWrongVersion=parseDependencyFiles({'go.mod':'module x\nrequire example.com/a v2.0.0\nreplace example.com/a v1.0.0 => example.com/fork/a v1.1.0\n'},now);
+  assert.equal(noWrongVersion.components[0]?.name,'example.com/a');
+});
+
+test('Maven locally available imported BOM supplies managed dependency versions',()=>{
+  const snap=parseDependencyFiles({
+    'bom/pom.xml':'<project><groupId>com.acme</groupId><artifactId>platform-bom</artifactId><version>1.0.0</version><dependencyManagement><dependencies><dependency><groupId>org.example</groupId><artifactId>lib</artifactId><version>3.2.1</version></dependency></dependencies></dependencyManagement></project>',
+    'app/pom.xml':'<project><groupId>com.acme</groupId><artifactId>app</artifactId><version>1.0.0</version><dependencyManagement><dependencies><dependency><groupId>com.acme</groupId><artifactId>platform-bom</artifactId><version>1.0.0</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement><dependencies><dependency><groupId>org.example</groupId><artifactId>lib</artifactId></dependency></dependencies></project>'
+  },now);
+  assert.equal(snap.components.some(c=>c.ecosystem==='maven'&&c.name==='org.example:lib'&&c.version==='3.2.1'&&c.direct),true);
+});

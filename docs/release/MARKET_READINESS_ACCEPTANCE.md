@@ -52,3 +52,7 @@ Gerrit remains a first-class governed CI/review integration and is covered by th
 ## Hardened completion criteria
 
 The completion gate additionally validates nested Git-ref dependency changes for every supported ecosystem, effective Go replacement/exclusion semantics, Cargo workspace lock classification, Maven dependency-management resolution, Poetry/uv lock ingestion, SBOM relationships and available checksums, denied registry policy, and governed dependency maintenance metadata. Built-in SAST is explicitly a deterministic baseline; specialist analyzers integrate through SARIF for deeper language-specific coverage.
+
+## Resolution correctness correction
+
+The final market-readiness gate additionally verifies that npm directness is derived from root lock metadata, Python lockfiles are associated with their project manifest, independent Cargo workspaces remain isolated (including workspace/renamed dependencies), Go replacements are version-aware with `go.sum` checksums, and locally available Maven imported BOMs participate in dependency-management resolution.
