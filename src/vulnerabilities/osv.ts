@@ -7,7 +7,7 @@ import { enrichDependencyMetadata } from '../dependencies/metadata.js';
 interface OsvQueryResult { vulns?: Array<{ id: string; modified?: string }>; next_page_token?: string; }
 interface OsvBatch { results?: OsvQueryResult[]; }
 
-function ecosystem(value: DependencyComponent['ecosystem']): string { return value === 'npm' ? 'npm' : 'PyPI'; }
+function ecosystem(value: DependencyComponent['ecosystem']): string | undefined { return value === 'npm' ? 'npm' : value === 'pypi' ? 'PyPI' : value === 'maven' ? 'Maven' : value === 'nuget' ? 'NuGet' : value === 'cargo' ? 'crates.io' : value === 'go' ? 'Go' : undefined; }
 function severityFrom(value: Record<string, unknown>): Severity {
   const database = value.database_specific && typeof value.database_specific === 'object' ? value.database_specific as Record<string, unknown> : {};
   const raw = String(database.severity ?? '').toLowerCase();
@@ -39,12 +39,13 @@ export async function syncOsvDatabase(root: string, config: SentryCodeConfig, se
   if (!config.vulnerabilities.osv.enabled) throw new Error('OSV synchronization is disabled by configuration');
   const snapshot = await discoverDependencies(root, new Date().toISOString(), serviceRoot);
   const components = await enrichDependencyMetadata(root, snapshot.components, { serviceRoot, offline: false });
-  const queries = components.map((item) => ({ package: { name: item.name, ecosystem: ecosystem(item.ecosystem) }, version: item.version }));
+  const supported = components.flatMap((item) => { const mapped=ecosystem(item.ecosystem); return mapped ? [{ component:item, ecosystem:mapped }] : []; });
+  const queries = supported.map(({component,ecosystem: mapped}) => ({ package: { name: component.name, ecosystem: mapped }, version: component.version }));
   const endpoint = config.vulnerabilities.osv.endpoint.replace(/\/$/, '');
-  const batch = await jsonFetch(`${endpoint}/v1/querybatch`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'quilons-sentrycode' }, body: JSON.stringify({ queries }) }, config.vulnerabilities.osv.timeoutMs) as OsvBatch;
+  const batch = queries.length ? await jsonFetch(`${endpoint}/v1/querybatch`, { method: 'POST', headers: { 'content-type': 'application/json', 'user-agent': 'quilons-sentrycode' }, body: JSON.stringify({ queries }) }, config.vulnerabilities.osv.timeoutMs) as OsvBatch : {results:[]};
   const advisories: VulnerabilityAdvisory[] = [];
-  for (let i = 0; i < components.length; i += 1) {
-    const component = components[i]!; const ids = batch.results?.[i]?.vulns ?? [];
+  for (let i = 0; i < supported.length; i += 1) {
+    const component = supported[i]!.component; const ids = batch.results?.[i]?.vulns ?? [];
     for (const item of ids) {
       const detail = await jsonFetch(`${endpoint}/v1/vulns/${encodeURIComponent(item.id)}`, { headers: { 'user-agent': 'quilons-sentrycode' } }, config.vulnerabilities.osv.timeoutMs) as Record<string, unknown>;
       const fixed = fixedVersion(detail);
@@ -55,5 +56,5 @@ export async function syncOsvDatabase(root: string, config: SentryCodeConfig, se
   const updatedAt = new Date().toISOString();
   const target = resolve(root, config.vulnerabilities.databaseFile); await mkdir(dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify({ schemaVersion: 1, updatedAt, advisories: unique }, null, 2)}\n`, 'utf8');
-  return { advisoryCount: unique.length, componentCount: components.length, updatedAt };
+  return { advisoryCount: unique.length, componentCount: supported.length, updatedAt };
 }

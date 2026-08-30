@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { SCHEMA_VERSION, type Finding, type ScannerContext, type ScannerPlugin, type ScannerResult } from '../../core/types.js';
 import { stableId } from '../../utils/hash.js';
 import { GitHubGovernanceProvider } from '../../git/github-provider.js';
+import { GerritProvider, gerritAuthFromEnv } from '../../git/gerrit-provider.js';
 const execFileAsync=promisify(execFile);
 async function git(root:string,args:string[]):Promise<string>{ const {stdout}=await execFileAsync('git',args,{cwd:root,windowsHide:true}); return stdout.trim(); }
 export class GitAssuranceScanner implements ScannerPlugin {
@@ -22,7 +23,7 @@ export class GitAssuranceScanner implements ScannerPlugin {
     if(context.config.gitAssurance.requireSignedCommit && !signed) add('unsigned-commit','HEAD commit is not verified','Policy requires a cryptographically signed HEAD commit.','high');
     const domains=context.config.gitAssurance.allowedEmailDomains.map(v=>v.toLowerCase());
     if(domains.length){ const domain=email.split('@')[1]?.toLowerCase() ?? ''; if(!domains.includes(domain)) add('author-email-domain','Commit author email domain is not allowed',`Commit author ${email || '(unknown)'} is outside the configured email domains.`,'medium'); }
-    let governanceProvider = 'unavailable'; let protectedBranch: boolean | null = null; let requiredApprovals: number | null = null; let statusChecksRequired: boolean | null = null;
+    let governanceProvider = 'unavailable'; let protectedBranch: boolean | null = null; let requiredApprovals: number | null = null; let statusChecksRequired: boolean | null = null; let gerritChange=''; let gerritLabels:Record<string,number>={};
     if (context.config.gitAssurance.github.enabled && context.repository.branch) {
       const token = process.env[context.config.gitAssurance.github.tokenEnv] ?? '';
       if (!token) throw new Error(`GitHub governance is enabled but ${context.config.gitAssurance.github.tokenEnv} is not set`);
@@ -32,6 +33,19 @@ export class GitAssuranceScanner implements ScannerPlugin {
       if (state.requiredApprovals !== null && state.requiredApprovals < context.config.gitAssurance.github.minimumApprovals) add('github.insufficient-reviews','GitHub review protection is insufficient',`Branch requires ${state.requiredApprovals} approving review(s); policy requires ${context.config.gitAssurance.github.minimumApprovals}.`,'high');
       if (context.config.gitAssurance.github.requireStatusChecks && state.statusChecksRequired !== true) add('github.status-checks-missing','GitHub required status checks are not configured','Policy requires at least one required status check on the protected branch.','high');
     }
-    return {scanner:this.id,findings,evidence:[{schemaVersion:SCHEMA_VERSION,id:stableId('evidence',`${context.repository.commitSha}|git-assurance|${at}`),type:'commit.verification',scanner:this.id,repository:context.repository.repository,commitSha:context.repository.commitSha,branch:context.repository.branch,generatedAt:at,findingIds:findings.map(f=>f.id),metadata:{scannerVersion:this.version,authorName:name,authorEmail:email,signatureStatus:signature || 'N',signatureVerified:signed,workingTreeClean:!context.repository.isDirty,governanceProvider,protectedBranch,requiredApprovals,statusChecksRequired}}],durationMs:Math.round(performance.now()-started)};
+    if (context.config.gitAssurance.gerrit.enabled) {
+      const ci=context.execution?.ci;
+      if (!ci || ci.provider!=='gerrit' || !ci.changeNumber) {
+        if (context.config.gitAssurance.gerrit.failClosed) throw new Error('Gerrit assurance is enabled but no Gerrit change context is available');
+      } else {
+        if (!context.config.gitAssurance.gerrit.apiBaseUrl) throw new Error('Gerrit assurance is enabled but gitAssurance.gerrit.apiBaseUrl is empty');
+        const provider=new GerritProvider({apiBaseUrl:context.config.gitAssurance.gerrit.apiBaseUrl,auth:gerritAuthFromEnv(context.config.gitAssurance.gerrit),timeoutMs:context.config.gitAssurance.gerrit.timeoutMs});
+        const state=await provider.inspect(ci.changeNumber,ci.revision??'current'); governanceProvider='gerrit'; gerritChange=state.changeNumber; gerritLabels=state.labels;
+        for(const [label,minimum] of Object.entries(context.config.gitAssurance.gerrit.requiredLabels)){
+          const actual=state.labels[label]??0; if(actual<minimum) add('gerrit.required-label',`Gerrit label ${label} is insufficient`,`Gerrit label ${label} is ${actual}; policy requires at least ${minimum}.`,'high');
+        }
+      }
+    }
+    return {scanner:this.id,findings,evidence:[{schemaVersion:SCHEMA_VERSION,id:stableId('evidence',`${context.repository.commitSha}|git-assurance|${at}`),type:'commit.verification',scanner:this.id,repository:context.repository.repository,commitSha:context.repository.commitSha,branch:context.repository.branch,generatedAt:at,findingIds:findings.map(f=>f.id),metadata:{scannerVersion:this.version,authorName:name,authorEmail:email,signatureStatus:signature || 'N',signatureVerified:signed,workingTreeClean:!context.repository.isDirty,governanceProvider,protectedBranch,requiredApprovals,statusChecksRequired,gerritChange,gerritLabels:JSON.stringify(gerritLabels)}}],durationMs:Math.round(performance.now()-started)};
   }
 }

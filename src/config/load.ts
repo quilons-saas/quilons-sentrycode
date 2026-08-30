@@ -5,8 +5,8 @@ import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/typ
 
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
-const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python']);
-const VALID_CI_PROVIDERS = new Set(['auto','github','gitlab','azure-devops','jenkins','generic','local']);
+const VALID_SAST_LANGUAGES = new Set(['javascript', 'typescript', 'python', 'java', 'csharp', 'c', 'cpp', 'rust', 'go']);
+const VALID_CI_PROVIDERS = new Set(['auto','github','gitlab','azure-devops','jenkins','gerrit','generic','local']);
 const VALID_AUTOMOTIVE_STANDARDS = new Set(['misra-c','misra-cpp','autosar-cpp']);
 const VALID_AUTOMOTIVE_TARGETS = new Set(['iso-sae-21434','unece-r155','unece-r156']);
 
@@ -32,6 +32,18 @@ function stringRecord(value: unknown, fallback: Record<string, string>, label: s
   return result;
 }
 
+
+function numberRecord(value: unknown, fallback: Record<string, number>, label: string): Record<string, number> {
+  if (value === undefined) return { ...fallback };
+  const object = asObject(value, label);
+  const result: Record<string, number> = {};
+  for (const [key, item] of Object.entries(object)) {
+    if (typeof item !== 'number' || !Number.isFinite(item)) throw new Error(`${label}.${key} must be a number`);
+    result[key] = item;
+  }
+  return result;
+}
+
 function failureModeRecord(value: unknown, fallback: Record<string, ScannerFailureMode>, label: string): Record<string, ScannerFailureMode> {
   const raw = stringRecord(value, fallback, label);
   for (const [key, mode] of Object.entries(raw)) {
@@ -51,6 +63,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const scan = raw.scan === undefined ? {} : asObject(raw.scan, 'scan');
   const secrets = raw.secrets === undefined ? {} : asObject(raw.secrets, 'secrets');
   const dependencies = raw.dependencies === undefined ? {} : asObject(raw.dependencies, 'dependencies');
+  const dependencyMaintenance = dependencies.maintenance === undefined ? {} : asObject(dependencies.maintenance, 'dependencies.maintenance');
   const licenses = raw.licenses === undefined ? {} : asObject(raw.licenses, 'licenses');
   const vulnerabilities = raw.vulnerabilities === undefined ? {} : asObject(raw.vulnerabilities, 'vulnerabilities');
   const sbom = raw.sbom === undefined ? {} : asObject(raw.sbom, 'sbom');
@@ -58,6 +71,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const externalSast = sast.external === undefined ? {} : asObject(sast.external, 'sast.external');
   const gitAssurance = raw.gitAssurance === undefined ? {} : asObject(raw.gitAssurance, 'gitAssurance');
   const githubAssurance = gitAssurance.github === undefined ? {} : asObject(gitAssurance.github, 'gitAssurance.github');
+  const gerritAssurance = gitAssurance.gerrit === undefined ? {} : asObject(gitAssurance.gerrit, 'gitAssurance.gerrit');
   const provenance = raw.provenance === undefined ? {} : asObject(raw.provenance, 'provenance');
   const automotive = raw.automotive === undefined ? {} : asObject(raw.automotive, 'automotive');
   const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
@@ -120,9 +134,17 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       enabled: typeof dependencies.enabled === 'boolean' ? dependencies.enabled : DEFAULT_CONFIG.dependencies.enabled,
       includeDev: typeof dependencies.includeDev === 'boolean' ? dependencies.includeDev : DEFAULT_CONFIG.dependencies.includeDev,
       allowedRegistries: stringArray(dependencies.allowedRegistries, DEFAULT_CONFIG.dependencies.allowedRegistries, 'dependencies.allowedRegistries'),
+      deniedRegistries: stringArray(dependencies.deniedRegistries, DEFAULT_CONFIG.dependencies.deniedRegistries, 'dependencies.deniedRegistries'),
       deniedPackages: stringArray(dependencies.deniedPackages, DEFAULT_CONFIG.dependencies.deniedPackages, 'dependencies.deniedPackages'),
       allowedPackages: stringArray(dependencies.allowedPackages, DEFAULT_CONFIG.dependencies.allowedPackages, 'dependencies.allowedPackages'),
-      versionRestrictions: stringRecord(dependencies.versionRestrictions, DEFAULT_CONFIG.dependencies.versionRestrictions, 'dependencies.versionRestrictions')
+      versionRestrictions: stringRecord(dependencies.versionRestrictions, DEFAULT_CONFIG.dependencies.versionRestrictions, 'dependencies.versionRestrictions'),
+      maintenance: {
+        enabled: typeof dependencyMaintenance.enabled === 'boolean' ? dependencyMaintenance.enabled : DEFAULT_CONFIG.dependencies.maintenance.enabled,
+        metadataFile: typeof dependencyMaintenance.metadataFile === 'string' ? dependencyMaintenance.metadataFile : DEFAULT_CONFIG.dependencies.maintenance.metadataFile,
+        maxReleaseAgeDays: typeof dependencyMaintenance.maxReleaseAgeDays === 'number' && dependencyMaintenance.maxReleaseAgeDays >= 0 ? dependencyMaintenance.maxReleaseAgeDays : DEFAULT_CONFIG.dependencies.maintenance.maxReleaseAgeDays,
+        denyDeprecated: typeof dependencyMaintenance.denyDeprecated === 'boolean' ? dependencyMaintenance.denyDeprecated : DEFAULT_CONFIG.dependencies.maintenance.denyDeprecated,
+        requireMetadata: typeof dependencyMaintenance.requireMetadata === 'boolean' ? dependencyMaintenance.requireMetadata : DEFAULT_CONFIG.dependencies.maintenance.requireMetadata
+      }
     },
     licenses: {
       enabled: typeof licenses.enabled === 'boolean' ? licenses.enabled : DEFAULT_CONFIG.licenses.enabled,
@@ -173,6 +195,23 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
         requireProtectedBranch: typeof githubAssurance.requireProtectedBranch === 'boolean' ? githubAssurance.requireProtectedBranch : DEFAULT_CONFIG.gitAssurance.github.requireProtectedBranch,
         minimumApprovals: typeof githubAssurance.minimumApprovals === 'number' && githubAssurance.minimumApprovals >= 0 ? Math.floor(githubAssurance.minimumApprovals) : DEFAULT_CONFIG.gitAssurance.github.minimumApprovals,
         requireStatusChecks: typeof githubAssurance.requireStatusChecks === 'boolean' ? githubAssurance.requireStatusChecks : DEFAULT_CONFIG.gitAssurance.github.requireStatusChecks
+      },
+      gerrit: {
+        enabled: typeof gerritAssurance.enabled === 'boolean' ? gerritAssurance.enabled : DEFAULT_CONFIG.gitAssurance.gerrit.enabled,
+        apiBaseUrl: typeof gerritAssurance.apiBaseUrl === 'string' ? gerritAssurance.apiBaseUrl : DEFAULT_CONFIG.gitAssurance.gerrit.apiBaseUrl,
+        authMode: gerritAssurance.authMode === 'basic' ? 'basic' : 'bearer',
+        tokenEnv: typeof gerritAssurance.tokenEnv === 'string' ? gerritAssurance.tokenEnv : DEFAULT_CONFIG.gitAssurance.gerrit.tokenEnv,
+        usernameEnv: typeof gerritAssurance.usernameEnv === 'string' ? gerritAssurance.usernameEnv : DEFAULT_CONFIG.gitAssurance.gerrit.usernameEnv,
+        passwordEnv: typeof gerritAssurance.passwordEnv === 'string' ? gerritAssurance.passwordEnv : DEFAULT_CONFIG.gitAssurance.gerrit.passwordEnv,
+        requiredLabels: numberRecord(gerritAssurance.requiredLabels, DEFAULT_CONFIG.gitAssurance.gerrit.requiredLabels, 'gitAssurance.gerrit.requiredLabels'),
+        publishReview: typeof gerritAssurance.publishReview === 'boolean' ? gerritAssurance.publishReview : DEFAULT_CONFIG.gitAssurance.gerrit.publishReview,
+        voteLabel: typeof gerritAssurance.voteLabel === 'string' ? gerritAssurance.voteLabel : DEFAULT_CONFIG.gitAssurance.gerrit.voteLabel,
+        passVote: typeof gerritAssurance.passVote === 'number' ? gerritAssurance.passVote : DEFAULT_CONFIG.gitAssurance.gerrit.passVote,
+        warnVote: typeof gerritAssurance.warnVote === 'number' ? gerritAssurance.warnVote : DEFAULT_CONFIG.gitAssurance.gerrit.warnVote,
+        failVote: typeof gerritAssurance.failVote === 'number' ? gerritAssurance.failVote : DEFAULT_CONFIG.gitAssurance.gerrit.failVote,
+        notify: ['NONE','OWNER','OWNER_REVIEWERS','ALL'].includes(String(gerritAssurance.notify)) ? gerritAssurance.notify as SentryCodeConfig['gitAssurance']['gerrit']['notify'] : DEFAULT_CONFIG.gitAssurance.gerrit.notify,
+        failClosed: typeof gerritAssurance.failClosed === 'boolean' ? gerritAssurance.failClosed : DEFAULT_CONFIG.gitAssurance.gerrit.failClosed,
+        timeoutMs: typeof gerritAssurance.timeoutMs === 'number' && gerritAssurance.timeoutMs > 0 ? gerritAssurance.timeoutMs : DEFAULT_CONFIG.gitAssurance.gerrit.timeoutMs
       }
     },
     provenance: {
@@ -296,6 +335,10 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
     next.incremental.scannerTimeoutMs = value;
   }
   if (env.SENTRYCODE_DISABLE_CI_ANNOTATIONS === 'true') next.ci.annotations = false;
+  if (env.SENTRYCODE_GERRIT_URL !== undefined) next.gitAssurance.gerrit.apiBaseUrl = env.SENTRYCODE_GERRIT_URL;
+  if (env.SENTRYCODE_GERRIT_TOKEN_ENV) next.gitAssurance.gerrit.tokenEnv = env.SENTRYCODE_GERRIT_TOKEN_ENV;
+  if (env.SENTRYCODE_GERRIT_USERNAME_ENV) next.gitAssurance.gerrit.usernameEnv = env.SENTRYCODE_GERRIT_USERNAME_ENV;
+  if (env.SENTRYCODE_GERRIT_PASSWORD_ENV) next.gitAssurance.gerrit.passwordEnv = env.SENTRYCODE_GERRIT_PASSWORD_ENV;
   if (env.SENTRYCODE_COMPLIANCE_TENANT !== undefined) next.compliance.tenant = env.SENTRYCODE_COMPLIANCE_TENANT;
   if (env.SENTRYCODE_COMPLIANCE_PROJECT !== undefined) next.compliance.project = env.SENTRYCODE_COMPLIANCE_PROJECT;
   if (env.SENTRYCODE_COMPLIANCE_ENDPOINT !== undefined) next.compliance.endpoint = env.SENTRYCODE_COMPLIANCE_ENDPOINT;

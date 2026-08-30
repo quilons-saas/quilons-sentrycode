@@ -13,7 +13,12 @@
     "README.md",
     "compliance",
     "integrations",
-    "docs"
+    "docs",
+    "ui",
+    "migrations",
+    "deploy",
+    "Dockerfile",
+    "scripts/acceptance"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -22,7 +27,9 @@
     "start": "npm run build && node dist/cli/main.js",
     "prepack": "npm run check && npm run test && npm run build",
     "package:smoke": "npm run check && npm test && npm run build && node scripts/package-smoke.mjs",
-    "release:verify": "npm run package:smoke"
+    "release:verify": "npm run package:smoke",
+    "acceptance:docker": "node scripts/acceptance/standalone-docker.mjs",
+    "acceptance:market": "npm run check && npm test && npm run build && node scripts/acceptance/market-readiness.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -30,5 +37,8 @@
   "devDependencies": {
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
   }
 }

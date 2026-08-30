@@ -21,7 +21,7 @@ export function renderCiAnnotations(report: ScanReport, ci: CiContext): string {
       return `##vso[task.logissue type=${type}${sourcepath}]${esc(`${f.ruleId}: ${f.title}`)}`;
     }).join('\n') + '\n';
   }
-  if (ci.provider === 'gitlab' || ci.provider === 'jenkins' || ci.provider === 'generic') {
+  if (ci.provider === 'gitlab' || ci.provider === 'jenkins' || ci.provider === 'gerrit' || ci.provider === 'generic') {
     return active.map((f) => `[SENTRYCODE:${f.severity.toUpperCase()}] ${f.location?.path ?? 'repository'} ${f.ruleId}: ${f.title}`).join('\n') + '\n';
   }
   return '';

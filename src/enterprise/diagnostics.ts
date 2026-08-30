@@ -19,8 +19,18 @@ export async function runDiagnostics(root: string, config: SentryCodeConfig): Pr
       ? { id: 'vulnerability-database-schema', ok: true, detail: `${db.advisories.length} advisories` }
       : { id: 'vulnerability-database-schema', ok: !config.offline.enabled, detail: 'database absent; schema check skipped' });
   } catch (error) { checks.push({ id: 'vulnerability-database-schema', ok: false, detail: (error as Error).message }); }
-  try { await access(root, constants.W_OK); checks.push({ id: 'repository-write', ok: true, detail: 'writable operational state' }); }
-  catch { checks.push({ id: 'repository-write', ok: false, detail: 'repository root not writable' }); }
+  const operationalState = resolve(root, '.sentrycode');
+  try {
+    await access(operationalState, constants.W_OK);
+    checks.push({ id: 'operational-state-write', ok: true, detail: '.sentrycode operational state writable' });
+  } catch {
+    try {
+      await access(root, constants.W_OK);
+      checks.push({ id: 'operational-state-write', ok: true, detail: 'repository root can create operational state' });
+    } catch {
+      checks.push({ id: 'operational-state-write', ok: false, detail: '.sentrycode operational state and repository root are not writable' });
+    }
+  }
   if (config.integrity.requireSignedConfig) await file('configuration-signature', config.integrity.configSignatureFile, true);
   if (config.integrity.publicKeyFile) await file('integrity-public-key', config.integrity.publicKeyFile, config.integrity.requireSignedConfig);
   try { JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')); checks.push({ id: 'package', ok: true, detail: 'package metadata valid' }); }

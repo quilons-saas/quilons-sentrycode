@@ -1,0 +1,112 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseDependencyFiles } from '../src/dependencies/discover.js';
+import { dependencySnapshotAtRef, diffDependencies } from '../src/dependencies/diff.js';
+import { cyclonedxSbom, spdxSbom } from '../src/sbom/generate.js';
+import { DependencyScanner } from '../src/scanners/dependencies/scanner.js';
+import { DEFAULT_CONFIG } from '../src/config/defaults.js';
+
+const execFileAsync=promisify(execFile);
+const now='2026-08-30T00:00:00.000Z';
+
+test('cross-ecosystem Git ref dependency diff reads nested supported manifests',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'sentrycode-diff-all-'));
+  try{
+    await execFileAsync('git',['init'],{cwd:root}); await execFileAsync('git',['config','user.email','test@example.com'],{cwd:root}); await execFileAsync('git',['config','user.name','Test'],{cwd:root});
+    const initial:Record<string,string>={
+      'js/package-lock.json':JSON.stringify({lockfileVersion:3,packages:{'node_modules/a':{version:'1.0.0'}}}),
+      'py/requirements.txt':'requests==2.31.0\n','java/pom.xml':'<project><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId><version>1.0.0</version></dependency></dependencies></project>',
+      'dotnet/App.csproj':'<Project><ItemGroup><PackageReference Include="Newtonsoft.Json" Version="13.0.2" /></ItemGroup></Project>',
+      'cpp/conanfile.txt':'[requires]\nfmt/10.1.0\n','rust/Cargo.toml':'[dependencies]\nserde="1"\n','rust/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.200"\n',
+      'go/go.mod':'module x\nrequire github.com/google/uuid v1.5.0\n'
+    };
+    for(const [name,content] of Object.entries(initial)){await mkdir(join(root,name.split('/').slice(0,-1).join('/')),{recursive:true});await writeFile(join(root,name),content);}
+    await execFileAsync('git',['add','.'],{cwd:root});await execFileAsync('git',['commit','-m','before'],{cwd:root});const before=(await execFileAsync('git',['rev-parse','HEAD'],{cwd:root})).stdout.trim();
+    const changed={...initial,'py/requirements.txt':'requests==2.32.3\n','java/pom.xml':initial['java/pom.xml']!.replace('1.0.0','2.0.0'),'dotnet/App.csproj':initial['dotnet/App.csproj']!.replace('13.0.2','13.0.3'),'cpp/conanfile.txt':'[requires]\nfmt/10.2.1\n','rust/Cargo.lock':initial['rust/Cargo.lock']!.replace('1.0.200','1.0.219'),'go/go.mod':'module x\nrequire github.com/google/uuid v1.6.0\n'};
+    for(const [name,content] of Object.entries(changed))await writeFile(join(root,name),content);await execFileAsync('git',['add','.'],{cwd:root});await execFileAsync('git',['commit','-m','after'],{cwd:root});
+    const beforeSnap=await dependencySnapshotAtRef(root,before,now);const afterSnap=await dependencySnapshotAtRef(root,'HEAD',now);const changes=diffDependencies(beforeSnap,afterSnap);const ecosystems=new Set(changes.map(c=>c.ecosystem));
+    for(const ecosystem of ['pypi','maven','nuget','conan','cargo','go'])assert.equal(ecosystems.has(ecosystem as any),true,`missing diff for ${ecosystem}`);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('Go replace and exclude govern the effective dependency set',()=>{
+  const snap=parseDependencyFiles({'go.mod':'module x\nrequire (\n example.com/a v1.0.0\n example.com/b v2.0.0\n)\nexclude example.com/b v2.0.0\nreplace example.com/a v1.0.0 => example.com/fork/a v1.1.0\n'},now);
+  assert.equal(snap.components.some(c=>c.name==='example.com/b'),false);const a=snap.components.find(c=>c.ecosystem==='go');assert.equal(a?.name,'example.com/fork/a');assert.equal(a?.version,'v1.1.0');assert.equal(a?.replacedFrom,'example.com/a@v1.0.0');
+});
+
+test('Maven dependency management resolves direct dependency versions and Python lockfiles are recognized',()=>{
+  const snap=parseDependencyFiles({
+    'pom.xml':'<project><dependencyManagement><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId><version>2.4.0</version></dependency></dependencies></dependencyManagement><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId></dependency></dependencies></project>',
+    'poetry.lock':'[[package]]\nname = "httpx"\nversion = "0.28.1"\ncategory = "main"\n','uv.lock':'[[package]]\nname = "anyio"\nversion = "4.8.0"\n'
+  },now);
+  assert.equal(snap.components.some(c=>c.ecosystem==='maven'&&c.version==='2.4.0'),true);assert.equal(snap.components.some(c=>c.ecosystem==='pypi'&&c.name==='httpx'),true);assert.equal(snap.components.some(c=>c.ecosystem==='pypi'&&c.name==='anyio'),true);
+});
+
+test('SBOM emits package hashes, application dependency relationships, and correct tool version',()=>{
+  const digest=Buffer.alloc(32,7);const snap=parseDependencyFiles({'package-lock.json':JSON.stringify({lockfileVersion:3,packages:{'node_modules/a':{version:'1.0.0',integrity:`sha256-${digest.toString('base64')}`,dependencies:{b:'1.0.0'}},'node_modules/b':{version:'1.0.0'}}})},now);const repo={root:'/',repository:'x',commitSha:'abc',branch:'main',isDirty:false};
+  const cdx=cyclonedxSbom(repo,snap.components,now) as any;const spdx=spdxSbom(repo,snap.components,now) as any;
+  assert.equal(cdx.components.some((c:any)=>c.hashes?.[0]?.alg==='SHA-256'),true);assert.equal(cdx.dependencies.some((d:any)=>d.dependsOn?.length),true);assert.equal(spdx.creationInfo.creators[0],'Tool: QUILONS SentryCode-0.1.0');assert.equal(spdx.packages.some((p:any)=>p.checksums?.length),true);assert.equal(spdx.relationships.some((r:any)=>r.relationshipType==='DEPENDS_ON'),true);
+});
+
+test('dependency governance enforces denied registries and governed maintenance criteria',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'sentrycode-maint-'));try{await writeFile(join(root,'package-lock.json'),JSON.stringify({lockfileVersion:3,packages:{'node_modules/a':{version:'1.0.0',resolved:'https://evil.example/a.tgz'}}}));await mkdir(join(root,'.sentrycode'),{recursive:true});await writeFile(join(root,'.sentrycode/dependency-health.json'),JSON.stringify({packages:{'npm:a':{lastReleaseAt:'2020-01-01T00:00:00.000Z',deprecated:true}}}));const config=structuredClone(DEFAULT_CONFIG);config.dependencies.deniedRegistries=['evil.example'];config.dependencies.maintenance={enabled:true,metadataFile:'.sentrycode/dependency-health.json',maxReleaseAgeDays:365,denyDeprecated:true,requireMetadata:true};config.vulnerabilities.enabled=false;config.licenses.enabled=false;const result=await new DependencyScanner().scan({repository:{root,repository:'x',commitSha:'abc',branch:'main',isDirty:false},config,now:()=>new Date(now)});const rules=new Set(result.findings.map(f=>f.ruleId));assert.equal(rules.has('dependency.registry-denied'),true);assert.equal(rules.has('dependency.deprecated'),true);assert.equal(rules.has('dependency.stale'),true);}finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('npm v3 lockfile directness comes from root dependency metadata, not flattened node_modules placement',()=>{
+  const snap=parseDependencyFiles({'package-lock.json':JSON.stringify({lockfileVersion:3,packages:{'':{dependencies:{direct:'1.0.0'}},'node_modules/direct':{version:'1.0.0',dependencies:{transitive:'2.0.0'}},'node_modules/transitive':{version:'2.0.0'}}})},now);
+  assert.equal(snap.components.find(c=>c.name==='direct')?.direct,true);
+  assert.equal(snap.components.find(c=>c.name==='transitive')?.direct,false);
+});
+
+test('Python lock directness is project-local and recognizes Poetry dependencies',()=>{
+  const snap=parseDependencyFiles({
+    'service-a/pyproject.toml':'[tool.poetry.dependencies]\npython = "^3.12"\nhttpx = "^0.28"\n',
+    'service-a/poetry.lock':'[[package]]\nname = "httpx"\nversion = "0.28.1"\n[[package]]\nname = "shared"\nversion = "1.0.0"\n',
+    'service-b/pyproject.toml':'[project]\ndependencies = [\n  "anyio==4.8.0"\n]\n',
+    'service-b/uv.lock':'[[package]]\nname = "anyio"\nversion = "4.8.0"\n[[package]]\nname = "httpx"\nversion = "0.29.0"\n'
+  },now);
+  const httpx=snap.components.filter(c=>c.name==='httpx');
+  assert.equal(httpx.some(c=>c.source==='service-a/poetry.lock'&&c.direct),true);
+  assert.equal(httpx.some(c=>c.source==='service-b/uv.lock'&&c.direct),false);
+  assert.equal(snap.components.some(c=>c.name==='anyio'&&c.direct),true);
+});
+
+test('independent Cargo workspaces do not contaminate direct dependency classification and workspace aliases resolve package names',()=>{
+  const snap=parseDependencyFiles({
+    'rust-a/Cargo.toml':'[workspace]\nmembers=["member"]\n[workspace.dependencies]\nserde_alias={ package="serde", version="1" }\n',
+    'rust-a/member/Cargo.toml':'[dependencies]\nserde_alias={ workspace=true }\n',
+    'rust-a/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.200"\n[[package]]\nname = "tokio"\nversion = "1.40.0"\n',
+    'rust-b/Cargo.toml':'[dependencies]\ntokio="1"\n',
+    'rust-b/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.200"\n[[package]]\nname = "tokio"\nversion = "1.40.0"\n'
+  },now);
+  const serde=snap.components.find(c=>c.ecosystem==='cargo'&&c.name==='serde');
+  const tokio=snap.components.find(c=>c.ecosystem==='cargo'&&c.name==='tokio');
+  assert.equal(serde?.direct,true);
+  assert.equal(tokio?.direct,true);
+  // uniq merges same package/version across workspaces; each direct flag must originate from its own workspace, never cross-contamination.
+  const isolated=parseDependencyFiles({'rust-a/Cargo.toml':'[dependencies]\nserde="1"\n','rust-a/Cargo.lock':'[[package]]\nname = "serde"\nversion = "1.0.0"\n[[package]]\nname = "tokio"\nversion = "1.0.0"\n','rust-b/Cargo.toml':'[dependencies]\ntokio="1"\n','rust-b/Cargo.lock':'[[package]]\nname = "serde"\nversion = "2.0.0"\n[[package]]\nname = "tokio"\nversion = "2.0.0"\n'},now);
+  assert.equal(isolated.components.find(c=>c.name==='tokio'&&c.version==='1.0.0')?.direct,false);
+  assert.equal(isolated.components.find(c=>c.name==='serde'&&c.version==='2.0.0')?.direct,false);
+});
+
+test('Go replacements are version-specific and go.sum contributes module checksums',()=>{
+  const digest=Buffer.alloc(32,9).toString('base64');
+  const snap=parseDependencyFiles({'go/go.mod':'module x\nrequire (\n example.com/a v1.0.0\n example.com/a2 v2.0.0\n)\nreplace example.com/a v1.0.0 => example.com/fork/a v1.1.0\nreplace example.com/a2 => example.com/fork/a2 v2.1.0\n','go/go.sum':`example.com/fork/a v1.1.0 h1:${digest}\nexample.com/fork/a2 v2.1.0 h1:${digest}\n`},now);
+  const a=snap.components.find(c=>c.name==='example.com/fork/a');const a2=snap.components.find(c=>c.name==='example.com/fork/a2');
+  assert.equal(a?.replacedFrom,'example.com/a@v1.0.0');assert.equal(a2?.replacedFrom,'example.com/a2@v2.0.0');assert.equal(a?.hashes?.[0]?.value,Buffer.alloc(32,9).toString('hex'));
+  const noWrongVersion=parseDependencyFiles({'go.mod':'module x\nrequire example.com/a v2.0.0\nreplace example.com/a v1.0.0 => example.com/fork/a v1.1.0\n'},now);
+  assert.equal(noWrongVersion.components[0]?.name,'example.com/a');
+});
+
+test('Maven locally available imported BOM supplies managed dependency versions',()=>{
+  const snap=parseDependencyFiles({
+    'bom/pom.xml':'<project><groupId>com.acme</groupId><artifactId>platform-bom</artifactId><version>1.0.0</version><dependencyManagement><dependencies><dependency><groupId>org.example</groupId><artifactId>lib</artifactId><version>3.2.1</version></dependency></dependencies></dependencyManagement></project>',
+    'app/pom.xml':'<project><groupId>com.acme</groupId><artifactId>app</artifactId><version>1.0.0</version><dependencyManagement><dependencies><dependency><groupId>com.acme</groupId><artifactId>platform-bom</artifactId><version>1.0.0</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement><dependencies><dependency><groupId>org.example</groupId><artifactId>lib</artifactId></dependency></dependencies></project>'
+  },now);
+  assert.equal(snap.components.some(c=>c.ecosystem==='maven'&&c.name==='org.example:lib'&&c.version==='3.2.1'&&c.direct),true);
+});

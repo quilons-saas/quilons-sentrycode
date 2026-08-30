@@ -106,6 +106,16 @@ See `.sentrycode/examples/release.rego`.
 - npm `package-lock.json`
 - pinned Python `requirements.txt`
 - pinned PEP 621 `pyproject.toml`
+- Java Maven `pom.xml`
+- Java Gradle `build.gradle`, `build.gradle.kts`, and resolved `gradle.lockfile`
+- .NET/C# `.csproj`, NuGet `packages.lock.json`, and resolved `obj/project.assets.json`
+- C/C++ Conan `conanfile.txt`, `conanfile.py`, and `conan.lock`
+- C/C++ vcpkg `vcpkg.json`, `vcpkg-lock.json`, and resolved `vcpkg_installed/vcpkg/status`
+- Rust `Cargo.toml` and resolved `Cargo.lock`
+- Go `go.mod` / `go.sum`
+- CMake/Conan/vcpkg service discovery for C/C++ monorepos
+- package URLs for npm, PyPI, Maven, NuGet, Conan, vcpkg, Cargo, and Go; OSV synchronization remains limited to OSV-supported package ecosystems while C/C++ components use the same local/offline advisory database and governed intelligence-bundle path
+- local Maven/NuGet/Cargo/Go cache license enrichment when package metadata is available; Conan/vcpkg license policy uses discovered metadata when present plus governed overrides/unknown-license policy
 - CycloneDX 1.5
 - SPDX 2.3
 - Git-ref dependency diffing
@@ -114,7 +124,7 @@ See `.sentrycode/examples/release.rego`.
 - offline vulnerability database
 - `sbom.generated`, `dependency.check`, `license.check`, `vuln.scan` evidence
 
-Unpinned Python constraints are intentionally not converted into invented installed versions.
+Unpinned Python constraints and unversioned vcpkg manifest entries are intentionally not converted into invented installed versions; resolved lock/status data is used when available.
 
 ## Slice 3 — policy-as-code and release gate
 
@@ -138,7 +148,7 @@ The release gate is based on the same normalized findings, evidence and effectiv
 
 SentryCode now includes native security-analysis and provenance capabilities in the standard scan pipeline:
 
-- TypeScript/JavaScript and Python SAST rules for high-risk constructs such as dynamic `eval`, shell execution, unsafe pickle deserialization, and security-sensitive weak randomness.
+- Native TypeScript/JavaScript, Python, Java, C#, C, and C++ SAST rules for high-risk constructs such as dynamic `eval`, shell/process execution, unsafe deserialization, SQL string construction, and weak cryptographic digests.
 - Git assurance evidence for commit author identity, commit signature state, clean-working-tree policy, and configurable author email domains.
 - A Git-provider governance adapter boundary for future branch-protection/review checks without coupling core to GitHub/GitLab/Azure DevOps.
 - `build.attestation` and `provenance.attestation` evidence generated from repository/build context.
@@ -262,7 +272,7 @@ The pre-commit hook scans staged/index content, not merely the working tree. The
 
 ### External SAST
 
-Native SAST remains a baseline. Specialist scanners can run outside or through SentryCode and provide SARIF 2.1.0. Configure `sast.external` with either an analyzer command plus arguments or an existing SARIF path. Results are normalized into the same SentryCode finding/evidence authority as native rules.
+Native SAST is a deterministic baseline, not a replacement for mature specialist language analyzers. Specialist scanners can run outside or through SentryCode and provide SARIF 2.1.0. Configure `sast.external` with either an analyzer command plus arguments or an existing SARIF path. Results are normalized into the same SentryCode finding/evidence authority as native rules.
 
 ### Service-scoped dependency assurance
 
@@ -300,3 +310,89 @@ sentrycode enterprise audit verify .
 ### GitHub governance
 
 When `gitAssurance.github.enabled` is true, SentryCode queries GitHub branch protection using the configured token environment variable and can enforce protected branches, minimum approving reviews and required status checks. Provider API state is normalized through the existing Git governance boundary.
+
+## Standalone Web UI
+
+SentryCode includes a lightweight standalone operational console for engineering and security users. It does not require QUILONS Compliance.
+
+Launch locally and open the browser automatically:
+
+```bash
+sentrycode ui .
+```
+
+Serve without opening a browser:
+
+```bash
+sentrycode serve . --host 127.0.0.1 --port 7787
+```
+
+Use `sentrycode ui . --no-open` for headless/local use. Non-loopback binding requires `SENTRYCODE_UI_TOKEN`; API requests must use that bearer token. The first UI slice is intentionally read-only and derives runs/findings from SentryCode's integrity-verified local Compliance/evidence store. Configure `compliance.tenant` and `compliance.project` (or corresponding policy context values) to select the local run scope.
+
+The authoritative standalone UI requirements are in `docs/requirements/QUILONS_SentryCode_Standalone_Web_UI_Requirements_v0.1.pdf`.
+
+
+## Standalone Web UI administration and PostgreSQL
+
+The standalone engineering console can run read-only without a database. Durable administration is enabled by PostgreSQL through `SENTRYCODE_DATABASE_URL`. PostgreSQL is an open-source, separate deployment unit; it is not embedded inside the SentryCode runtime.
+
+```powershell
+$env:SENTRYCODE_POSTGRES_PASSWORD = "use-a-long-random-password"
+docker compose -f deploy/docker-compose.postgres.yml up -d
+$env:SENTRYCODE_DATABASE_URL = "postgresql://sentrycode:$env:SENTRYCODE_POSTGRES_PASSWORD@127.0.0.1:54327/sentrycode"
+node .\dist\cli\main.js database migrate
+node .\dist\cli\main.js database status
+```
+
+For local-admin Web UI writes, set a separate browser-session credential before launching the UI:
+
+```powershell
+$env:SENTRYCODE_UI_ADMIN_TOKEN = "use-a-different-long-random-token"
+node .\dist\cli\main.js ui --no-open
+```
+
+PostgreSQL stores repository registrations, UI-managed scanner settings, policy assignments, waiver workflow state, principal/RBAC foundation, integration metadata and application audit indexes. SentryCode's signed/tamper-evident evidence store remains the authoritative evidence source. UI-managed repository policy, scanner and active waiver changes are materialized into the registered repository's existing `.sentrycode` contracts so later CLI/CI scans consume the same effective configuration. Signed configuration enforcement blocks such materialization rather than silently modifying signed files.
+
+
+## Standalone server deployment
+
+SentryCode can run as a standalone Web UI/API server with PostgreSQL in a separate container. The production deployment is defined in `deploy/docker-compose.yml` and uses the root `Dockerfile`.
+
+See `docs/on-prem/DOCKER_DEPLOYMENT.md`.
+
+The server supports local token authentication and optional enterprise OIDC. SentryCode authorization is server-enforced with viewer, engineer, security-admin and administrator roles. OIDC identities must be registered in SentryCode before they receive permissions.
+
+The standalone UI also exposes enterprise diagnostics, automotive evidence status, integration metadata, vulnerability-intelligence status and governed operational actions. PostgreSQL is application-state storage; signed SentryCode evidence remains the evidence authority.
+
+## Standalone production acceptance
+
+After the normal TypeScript, test, build and package checks pass, validate the real two-container standalone deployment on a Docker-capable host:
+
+```sh
+npm run acceptance:docker
+```
+
+This uses an isolated Compose project with temporary secrets and volumes, validates readiness, authentication/RBAC, PostgreSQL-backed administration, restart persistence, operational backup/retention, diagnostics, Automotive status and audit capture, and removes the acceptance deployment afterward. See `docs/on-prem/STANDALONE_ACCEPTANCE.md`.
+
+## Gerrit
+
+SentryCode includes first-class Gerrit change/patchset support: Gerrit CI context detection, REST authentication, required review-label enforcement, inline finding publication, summary review publication, and configurable Gerrit voting. Configuration and CI examples are in `docs/integrations/GERRIT.md` and `integrations/gerrit/`.
+
+
+## Cross-language market-readiness acceptance
+
+The v0.1 market-readiness gate covers native JavaScript/TypeScript, Python, Java, .NET/C#, C, C++, Rust and Go support together with npm, PyPI, Maven/Gradle, NuGet, Conan, vcpkg, Cargo and Go modules.
+
+Run:
+
+```bash
+npm run acceptance:market
+npm run acceptance:docker
+```
+
+Both gates must pass before a market-ready release. See `docs/release/MARKET_READINESS_ACCEPTANCE.md`.
+
+
+## Cross-language market-readiness hardening
+
+The final market-readiness gate includes nested Git-ref dependency diffing across npm, PyPI, Maven/Gradle, NuGet, Conan, vcpkg, Cargo and Go modules; effective Go replace/exclude handling; workspace-aware Cargo lock classification; Maven dependency-management resolution; Poetry/uv locks; CycloneDX/SPDX dependency relationships and available hashes; denied-registry governance; and governed stale/deprecated dependency-maintenance criteria. See `SLICE_18_MARKET_READINESS_HARDENING.md`.

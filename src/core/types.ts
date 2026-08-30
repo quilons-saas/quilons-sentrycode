@@ -6,8 +6,8 @@ export type ScannerExecutionStatus = 'success' | 'failed' | 'skipped';
 export type ScannerFailureMode = 'fail' | 'warn' | 'ignore';
 export type PolicyLevel = 'organization' | 'tenant' | 'project' | 'repository' | 'service';
 export type PolicyField = 'failOn' | 'warnOn' | 'requiredScanners' | 'scannerFailureModes';
-export type SastLanguage = 'javascript' | 'typescript' | 'python';
-export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'generic' | 'local';
+export type SastLanguage = 'javascript' | 'typescript' | 'python' | 'java' | 'csharp' | 'c' | 'cpp' | 'rust' | 'go';
+export type CiProvider = 'github' | 'gitlab' | 'azure-devops' | 'jenkins' | 'gerrit' | 'generic' | 'local';
 export type ScanMode = 'full' | 'incremental';
 export type AutomotiveStandard = 'misra-c' | 'misra-cpp' | 'autosar-cpp';
 export type AutomotiveEvidenceTarget = 'iso-sae-21434' | 'unece-r155' | 'unece-r156';
@@ -92,12 +92,15 @@ export interface CiContext {
   repository?: string;
   buildId?: string;
   jobId?: string;
+  changeNumber?: string;
+  patchsetNumber?: string;
+  revision?: string;
 }
 
 export interface ServiceComponent {
   name: string;
   root: string;
-  kind: 'node' | 'python' | 'generic';
+  kind: 'node' | 'python' | 'java' | 'dotnet' | 'cpp' | 'rust' | 'go' | 'generic';
 }
 
 export interface IncrementalPlan {
@@ -133,7 +136,7 @@ export interface Waiver {
 }
 
 export interface DependencyComponent {
-  ecosystem: 'npm' | 'pypi';
+  ecosystem: 'npm' | 'pypi' | 'maven' | 'nuget' | 'conan' | 'vcpkg' | 'cargo' | 'go';
   name: string;
   version: string;
   direct: boolean;
@@ -142,6 +145,9 @@ export interface DependencyComponent {
   license?: string;
   purl: string;
   packagePath?: string;
+  hashes?: Array<{ algorithm: 'SHA-256' | 'SHA-512'; value: string }>;
+  dependencies?: string[];
+  replacedFrom?: string;
 }
 
 export interface DependencySnapshot {
@@ -253,9 +259,17 @@ export interface SentryCodeConfig {
     enabled: boolean;
     includeDev: boolean;
     allowedRegistries: string[];
+    deniedRegistries: string[];
     deniedPackages: string[];
     allowedPackages: string[];
     versionRestrictions: Record<string, string>;
+    maintenance: {
+      enabled: boolean;
+      metadataFile: string;
+      maxReleaseAgeDays: number;
+      denyDeprecated: boolean;
+      requireMetadata: boolean;
+    };
   };
   licenses: {
     enabled: boolean;
@@ -319,6 +333,23 @@ export interface SentryCodeConfig {
       requireProtectedBranch: boolean;
       minimumApprovals: number;
       requireStatusChecks: boolean;
+    };
+    gerrit: {
+      enabled: boolean;
+      apiBaseUrl: string;
+      authMode: 'bearer' | 'basic';
+      tokenEnv: string;
+      usernameEnv: string;
+      passwordEnv: string;
+      requiredLabels: Record<string, number>;
+      publishReview: boolean;
+      voteLabel: string;
+      passVote: number;
+      warnVote: number;
+      failVote: number;
+      notify: 'NONE' | 'OWNER' | 'OWNER_REVIEWERS' | 'ALL';
+      failClosed: boolean;
+      timeoutMs: number;
     };
   };
   provenance: {

@@ -45,8 +45,12 @@ import { runDiagnostics } from '../enterprise/diagnostics.js';
 import { installGitHooks } from '../git/hooks.js';
 import { scanHistorySecrets, scanStagedSecrets } from '../git/secrets.js';
 import { issueComplianceToken } from '../compliance/auth.js';
+import { startWebServer } from '../web/server.js';
+import { createApplicationStateStore } from '../application/factory.js';
+import { openBrowser } from '../web/open-browser.js';
+import { GerritProvider, gerritAuthFromEnv, gerritReviewMessage } from '../git/gerrit-provider.js';
 
-interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; }
+interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
 interface SbomOptions extends CommonOptions { command: 'sbom'; format: 'cyclonedx' | 'spdx'; }
 interface DiffOptions extends CommonOptions { command: 'dependencies-diff'; base: string; head: string; format: 'console' | 'json'; }
@@ -56,9 +60,11 @@ interface ProvenanceOptions extends CommonOptions { command: 'provenance-attest'
 interface VerifyOptions extends CommonOptions { command: 'provenance-verify'; attestation: string; publicKey: string; }
 interface ServicesOptions extends CommonOptions { command: 'services'; format: 'console' | 'json'; }
 interface ComplianceOptions extends CommonOptions { command: 'compliance-manifest' | 'compliance-health' | 'compliance-ready' | 'compliance-publish' | 'compliance-runs' | 'compliance-run' | 'compliance-serve'; format: 'console' | 'json'; }
+interface WebOptions extends CommonOptions { command: 'ui' | 'serve'; format: 'console'; }
+interface DatabaseOptions extends CommonOptions { command: 'database-migrate' | 'database-status'; format: 'console' | 'json'; }
 interface EnterpriseOptions extends CommonOptions { command: 'enterprise-diagnostics' | 'enterprise-backup' | 'enterprise-retention' | 'enterprise-restore' | 'enterprise-audit-verify' | 'intelligence-import' | 'intelligence-sync' | 'intelligence-bundle' | 'config-sign' | 'config-verify' | 'hooks-install' | 'secrets-staged' | 'secrets-history' | 'compliance-token'; format: 'console' | 'json'; bundle?: string; backup?: string; key?: string; publicKey?: string; ttl?: number; }
 
-type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | EnterpriseOptions;
+type CliOptions = ScanOptions | SbomOptions | DiffOptions | PolicyOptions | ReleaseOptions | ProvenanceOptions | VerifyOptions | ServicesOptions | ComplianceOptions | WebOptions | DatabaseOptions | EnterpriseOptions;
 
 function usage(): string {
   return `QUILONS SentryCode
@@ -74,6 +80,10 @@ Usage:
   sentrycode provenance attest [path] --artifact FILE [--artifact FILE...] [--key PRIVATE.pem] [--output FILE]
   sentrycode provenance verify [path] --attestation FILE --public-key PUBLIC.pem
   sentrycode services [path] [--format console|json]
+  sentrycode ui [path] [--tenant ID] [--project ID] [--host HOST] [--port PORT] [--no-open]
+  sentrycode serve [path] [--tenant ID] [--project ID] [--host HOST] [--port PORT]
+  sentrycode database migrate [path]
+  sentrycode database status [path] [--format console|json]
   sentrycode compliance manifest [path] [--format console|json]
   sentrycode compliance health [path] [--format console|json]
   sentrycode compliance ready [path] [--format console|json]
@@ -107,6 +117,10 @@ Commands:
   provenance attest  Generate in-toto/SLSA-shaped provenance and optional signature.
   provenance verify  Verify a signed provenance attestation.
   services           Discover monorepo services/packages.
+  ui                 Launch the standalone SentryCode Web UI and API.
+  serve              Serve the standalone Web UI/API without opening a browser.
+  database migrate   Apply PostgreSQL application-state migrations.
+  database status    Report PostgreSQL application-state connectivity/schema status.
   compliance manifest Expose the versioned QUILONS Compliance plugin manifest.
   compliance health   Lightweight plugin health probe.
   compliance ready    Installer/platform readiness probe.
@@ -152,6 +166,8 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'release' && argv[1] === 'check') { command = 'release-check'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'attest') { command = 'provenance-attest'; offset = 2; }
   else if (argv[0] === 'provenance' && argv[1] === 'verify') { command = 'provenance-verify'; offset = 2; }
+  else if (argv[0] === 'database' && argv[1] === 'migrate') { command = 'database-migrate'; offset = 2; }
+  else if (argv[0] === 'database' && argv[1] === 'status') { command = 'database-status'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'manifest') { command = 'compliance-manifest'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'health') { command = 'compliance-health'; offset = 2; }
   else if (argv[0] === 'compliance' && argv[1] === 'ready') { command = 'compliance-ready'; offset = 2; }
@@ -173,7 +189,7 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   else if (argv[0] === 'enterprise' && argv[1] === 'audit' && argv[2] === 'verify') { command = 'enterprise-audit-verify'; offset = 3; }
   else if (argv[0] === 'config' && argv[1] === 'sign') { command = 'config-sign'; offset = 2; }
   else if (argv[0] === 'config' && argv[1] === 'verify') { command = 'config-verify'; offset = 2; }
-  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services') command = argv[0];
+  else if (argv[0] === 'scan' || argv[0] === 'check' || argv[0] === 'sbom' || argv[0] === 'services' || argv[0] === 'ui' || argv[0] === 'serve') command = argv[0];
   else throw new Error(`Unknown command: ${argv.slice(0, 2).join(' ')}`);
 
   let path = process.cwd();
@@ -194,6 +210,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
   let tenant: string | undefined;
   let project: string | undefined;
   let runId: string | undefined;
+  let host: string | undefined;
+  let port: number | undefined;
+  let noOpen = false;
   let bundle: string | undefined;
   let backup: string | undefined;
   let ttl: number | undefined;
@@ -210,6 +229,9 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else if (arg === '--tenant') { tenant = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--project') { project = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--run-id') { runId = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--host') { host = requireValue(argv, i, arg); i += 1; }
+    else if (arg === '--port') { const value = Number(requireValue(argv, i, arg)); i += 1; if (!Number.isInteger(value) || value < 0 || value > 65535) throw new Error('--port must be an integer from 0 to 65535'); port = value; }
+    else if (arg === '--no-open') { noOpen = true; }
     else if (arg === '--bundle') { bundle = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--backup') { backup = requireValue(argv, i, arg); i += 1; }
     else if (arg === '--ttl') { const raw = Number(requireValue(argv, i, arg)); if (!Number.isFinite(raw) || raw <= 0) throw new Error('--ttl requires a positive number'); ttl = Math.floor(raw); i += 1; }
@@ -231,8 +253,13 @@ function parseArgs(argv: string[]): CliOptions | 'help' {
     else throw new Error(`Unexpected argument: ${arg}`);
   }
 
-  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}) };
-  if (command.startsWith('compliance-') && command !== 'compliance-token') {
+  const common = { path, ...(config ? { config } : {}), ...(output ? { output } : {}), ...(service ? { service } : {}), ...(base ? { base } : {}), ...(head !== 'HEAD' ? { head } : {}), ...(full ? { full: true } : {}), ...(ci ? { ci: true } : {}), ...(tenant ? { tenant } : {}), ...(project ? { project } : {}), ...(runId ? { runId } : {}), ...(host ? { host } : {}), ...(port !== undefined ? { port } : {}), ...(noOpen ? { noOpen: true } : {}) };
+  if (command === 'ui' || command === 'serve') return { command, ...common, format: 'console' };
+  if (command === 'database-migrate' || command === 'database-status') {
+    if (scanFormat === 'sarif') throw new Error('database commands do not support SARIF format');
+    return { command, ...common, format: scanFormat as 'console' | 'json' };
+  }
+    if (command.startsWith('compliance-') && command !== 'compliance-token') {
     if (scanFormat === 'sarif') throw new Error('compliance commands do not support SARIF format');
     if (command === 'compliance-run' && !runId) throw new Error('compliance run requires --run-id ID');
     return { command: command as ComplianceOptions['command'], ...common, format: scanFormat as 'console' | 'json' };
@@ -336,6 +363,19 @@ async function publishCompliance(root: string, config: SentryCodeConfig, options
   return publication;
 }
 
+async function publishGerrit(root:string,config:SentryCodeConfig,ci:ReturnType<typeof detectCi>,report:ScanReport,decision:ScanReport['policy']['decision']) {
+  const g=config.gitAssurance.gerrit;
+  if(!g.enabled || !g.publishReview || ci.provider!=='gerrit') return null;
+  if(!ci.changeNumber || !ci.revision){ if(g.failClosed) throw new Error('Gerrit review publication requires change number and patchset revision'); return null; }
+  if(!g.apiBaseUrl) throw new Error('Gerrit review publication requires gitAssurance.gerrit.apiBaseUrl');
+  const provider=new GerritProvider({apiBaseUrl:g.apiBaseUrl,auth:gerritAuthFromEnv(g),timeoutMs:g.timeoutMs});
+  const active=report.policy.findings.filter(item=>!item.waived).map(item=>item.finding);
+  const vote=decision==='FAIL'?g.failVote:decision==='WARN'?g.warnVote:g.passVote;
+  const result=await provider.publishReview({changeNumber:ci.changeNumber,revision:ci.revision,message:gerritReviewMessage(decision,active),findings:active,label:g.voteLabel,vote,notify:g.notify});
+  await appendAuditEvent(root,config.integrity.auditLogFile,'gerrit.review.published',{changeNumber:ci.changeNumber,revision:ci.revision,decision,label:g.voteLabel,vote,findingCount:active.length},undefined,config.integrity.evidenceSigningPrivateKeyFile||undefined);
+  return result;
+}
+
 async function main(): Promise<number> {
   let options: CliOptions | 'help';
   try { options = parseArgs(process.argv.slice(2)); }
@@ -344,6 +384,58 @@ async function main(): Promise<number> {
 
   try {
     await stat(options.path);
+    const standaloneRoot = resolve(options.path);
+
+    if (options.command === 'database-migrate' || options.command === 'database-status') {
+      const store = await createApplicationStateStore();
+      try {
+        if (options.command === 'database-migrate') {
+          const version = await store.migrate();
+          process.stdout.write(`SentryCode PostgreSQL schema migrated to version ${version}\n`);
+          return EXIT_CODES.PASS;
+        }
+        const status = await store.status();
+        const rendered = options.format === 'json' ? `${JSON.stringify(status, null, 2)}\n` : `${status.connected ? 'PASS' : 'FAIL'} PostgreSQL application state: ${status.detail}${status.schemaVersion === null ? '' : ` (schema ${status.schemaVersion})`}\n`;
+        process.stdout.write(rendered);
+        return status.connected ? EXIT_CODES.PASS : EXIT_CODES.RUNTIME_FAILURE;
+      } finally { await store.close(); }
+    }
+
+    if (options.command === 'ui' || options.command === 'serve') {
+      let config;
+      try { config = await loadConfig(standaloneRoot, options.config); }
+      catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+
+      const configPath = options.config ?? '.sentrycode/config.json';
+      if (config.integrity.requireSignedConfig) {
+        if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+        const ok = await verifyFile(standaloneRoot, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
+        if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      }
+
+      const configuredTenant = options.tenant || config.compliance.tenant || config.policy.context.tenant || '';
+      const configuredProject = options.project || config.compliance.project || config.policy.context.project || '';
+      const identity = configuredTenant && configuredProject ? complianceIdentity(configuredTenant, configuredProject) : null;
+      const host = options.host ?? '127.0.0.1';
+      const port = options.port ?? 7787;
+      const token = process.env.SENTRYCODE_UI_TOKEN ?? '';
+      const adminToken = process.env.SENTRYCODE_UI_ADMIN_TOKEN ?? '';
+      const running = await startWebServer(standaloneRoot, config, identity, { host, port, ...(token ? { token } : {}), ...(adminToken ? { adminToken } : {}) });
+      process.stdout.write(`SentryCode Web UI listening on ${running.url}\n`);
+      if (options.command === 'ui' && !options.noOpen) openBrowser(running.url);
+      await new Promise<void>((resolveShutdown) => {
+        let closing = false;
+        const shutdown = () => {
+          if (closing) return;
+          closing = true;
+          running.server.close(() => resolveShutdown());
+        };
+        process.once('SIGTERM', shutdown);
+        process.once('SIGINT', shutdown);
+      });
+      return EXIT_CODES.PASS;
+    }
+
     const repository = await resolveRepository(options.path);
 
     if (options.command === 'dependencies-diff') {
@@ -576,6 +668,7 @@ async function main(): Promise<number> {
       if (options.output) console.log(`Release report written: ${await writeOutput(repository.root, options.output, rendered)}`);
       else process.stdout.write(rendered);
       if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+      await publishGerrit(repository.root,config,ciContext,report,release.decision.decision);
       if (release.decision.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
         await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
       }
@@ -589,6 +682,7 @@ async function main(): Promise<number> {
       else { console.error('--output requires --format json or sarif for scan/check/policy evaluate'); return EXIT_CODES.CONFIGURATION_FAILURE; }
     } else process.stdout.write(rendered);
     if (config.ci.annotations && (options.ci || ciContext.detected)) process.stdout.write(renderCiAnnotations(report, ciContext));
+    await publishGerrit(repository.root,config,ciContext,report,report.policy.decision);
     if (report.policy.decision !== 'FAIL' && !repository.isDirty && repository.commitSha) {
       await writeIncrementalCache(repository.root, config.incremental.cacheFile, { schemaVersion: 1, repository: repository.repository, lastSuccessfulCommit: repository.commitSha, updatedAt: report.completedAt });
     }

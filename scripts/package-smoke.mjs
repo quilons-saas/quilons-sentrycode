@@ -45,6 +45,16 @@ try {
     ? join(temp, 'node_modules', '.bin', 'sentrycode.cmd')
     : join(temp, 'node_modules', '.bin', 'sentrycode');
   await access(shim);
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'ui', 'index.html'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'migrations', '001_application_state.sql'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'deploy', 'docker-compose.postgres.yml'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'deploy', 'docker-compose.yml'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'Dockerfile'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'on-prem', 'DOCKER_DEPLOYMENT.md'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'on-prem', 'STANDALONE_ACCEPTANCE.md'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'scripts', 'acceptance', 'standalone-docker.mjs'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'scripts', 'acceptance', 'market-readiness.mjs'));
+  await access(join(temp, 'node_modules', '@quilons', 'sentrycode', 'docs', 'release', 'MARKET_READINESS_ACCEPTANCE.md'));
 
   const installedCli = join(temp, 'node_modules', '@quilons', 'sentrycode', 'dist', 'cli', 'main.js');
   const result = await execFileAsync(process.execPath, [installedCli, '--help'], {

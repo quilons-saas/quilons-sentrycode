@@ -1,0 +1,60 @@
+services:
+  sentrycode-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sentrycode
+      POSTGRES_USER: sentrycode
+      POSTGRES_PASSWORD: ${SENTRYCODE_POSTGRES_PASSWORD:?Set SENTRYCODE_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentrycode -d sentrycode"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - sentrycode-postgres-data:/var/lib/postgresql/data
+    networks: [sentrycode-internal]
+
+  sentrycode:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: quilons/sentrycode:${SENTRYCODE_IMAGE_TAG:-0.1.0}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    depends_on:
+      sentrycode-postgres:
+        condition: service_healthy
+    environment:
+      SENTRYCODE_DATABASE_URL: postgresql://sentrycode:${SENTRYCODE_POSTGRES_PASSWORD}@sentrycode-postgres:5432/sentrycode
+      SENTRYCODE_UI_TOKEN: ${SENTRYCODE_UI_TOKEN:?Set SENTRYCODE_UI_TOKEN}
+      SENTRYCODE_UI_ADMIN_TOKEN: ${SENTRYCODE_UI_ADMIN_TOKEN:?Set SENTRYCODE_UI_ADMIN_TOKEN}
+      SENTRYCODE_OIDC_ISSUER: ${SENTRYCODE_OIDC_ISSUER:-}
+      SENTRYCODE_OIDC_AUDIENCE: ${SENTRYCODE_OIDC_AUDIENCE:-}
+      SENTRYCODE_OIDC_JWKS_URI: ${SENTRYCODE_OIDC_JWKS_URI:-}
+      SENTRYCODE_GERRIT_URL: ${SENTRYCODE_GERRIT_URL:-}
+      SENTRYCODE_GERRIT_TOKEN: ${SENTRYCODE_GERRIT_TOKEN:-}
+      SENTRYCODE_GERRIT_USERNAME: ${SENTRYCODE_GERRIT_USERNAME:-}
+      SENTRYCODE_GERRIT_PASSWORD: ${SENTRYCODE_GERRIT_PASSWORD:-}
+    command: ["sh","-c","node dist/cli/main.js database migrate . && exec node dist/cli/main.js serve . --tenant ${SENTRYCODE_TENANT:-standalone} --project ${SENTRYCODE_PROJECT:-default} --host 0.0.0.0 --port 7787"]
+    ports:
+      - "${SENTRYCODE_BIND_ADDRESS:-127.0.0.1}:${SENTRYCODE_PORT:-7787}:7787"
+    volumes:
+      - sentrycode-data:/app/.sentrycode
+    networks: [sentrycode-internal]
+
+volumes:
+  sentrycode-postgres-data:
+  sentrycode-data:
+
+networks:
+  sentrycode-internal:
+    driver: bridge

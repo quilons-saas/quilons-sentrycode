@@ -30,7 +30,15 @@
     ],
     "deniedPackages": [],
     "allowedPackages": [],
-    "versionRestrictions": {}
+    "versionRestrictions": {},
+    "deniedRegistries": [],
+    "maintenance": {
+      "enabled": false,
+      "metadataFile": ".sentrycode/dependency-health.json",
+      "maxReleaseAgeDays": 730,
+      "denyDeprecated": true,
+      "requireMetadata": false
+    }
   },
   "licenses": {
     "enabled": true,
@@ -108,7 +116,13 @@
     "languages": [
       "javascript",
       "typescript",
-      "python"
+      "python",
+      "java",
+      "csharp",
+      "c",
+      "cpp",
+      "rust",
+      "go"
     ],
     "external": {
       "enabled": false,

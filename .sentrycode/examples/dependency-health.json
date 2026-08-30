@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "npm:example-package": {
+      "lastReleaseAt": "2026-01-15T00:00:00.000Z",
+      "deprecated": false
+    }
+  }
+}
