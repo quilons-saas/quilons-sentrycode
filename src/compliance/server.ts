@@ -36,6 +36,13 @@ export async function startComplianceServer(service: SentryCodeComplianceService
         if ((requestedTenant && requestedTenant !== claimedIdentity.tenant) || (requestedProject && requestedProject !== claimedIdentity.project)) { json(res, 403, { error: 'scope_forbidden' }); return; }
       }
       if (url.pathname === '/v1/runs') { json(res, 200, await service.listRuns(scope)); return; }
+      const evidenceMatch = /^\/v1\/runs\/([A-Za-z0-9._-]+)\/evidence\/([A-Za-z0-9._-]+)$/.exec(url.pathname);
+      if (evidenceMatch) {
+        const value = await service.getEvidenceById(scope, evidenceMatch[1]!, evidenceMatch[2]!);
+        if (value === null) { json(res, 404, { error: 'evidence_not_found' }); return; }
+        json(res, 200, value);
+        return;
+      }
       const match = /^\/v1\/runs\/([A-Za-z0-9._-]+)(?:\/(findings|evidence|policy|waivers))?$/.exec(url.pathname);
       if (!match) { json(res, 404, { error: 'not_found' }); return; }
       const runId = match[1]!; const view = match[2];

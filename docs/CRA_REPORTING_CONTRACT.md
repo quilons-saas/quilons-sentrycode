@@ -104,3 +104,22 @@ The existing tamper-evident enterprise audit chain records CRA queue creation, s
 A successful HTTP response is the currently defined delivery acknowledgement and its status code is retained. No CRA-specific receipt identifier is parsed because no authoritative CRA receipt response contract has been defined; adding one must follow the normal versioned-contract process rather than guessing an API field.
 
 All existing `/v1` Compliance read APIs remain unchanged and continue to be the authoritative pull path for CRA when it needs full evidence.
+
+
+## Direct evidence retrieval (Slice 23)
+
+CRA may resolve a specific evidence ID directly without fetching the complete evidence envelope for the run:
+
+```text
+GET /v1/runs/{runId}/evidence/{evidenceId}
+```
+
+The endpoint reuses the existing governed `/v1` authentication, tenant/project scope enforcement, immutable Compliance store and integrity verification path. It does not introduce a second evidence model or storage mechanism.
+
+The existing bulk endpoint remains supported for compatibility:
+
+```text
+GET /v1/runs/{runId}/evidence
+```
+
+`CraFindingReport.evidenceReference.evidenceIds` remains the authoritative list of evidence records associated with the reported technical finding. CRA may request any of those IDs through the direct evidence route. The report contract itself is unchanged; no duplicate evidence locator representation is added.

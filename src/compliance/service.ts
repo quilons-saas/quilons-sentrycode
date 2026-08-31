@@ -33,6 +33,11 @@ export class SentryCodeComplianceService {
     const run = await this.getRun(identity, runId);
     return run?.evidence ?? null;
   }
+  async getEvidenceById(identity: ComplianceIdentity, runId: string, evidenceId: string) {
+    const envelope = await this.getEvidence(identity, runId);
+    if (!envelope) return null;
+    return envelope.evidence.find((item) => item.id === evidenceId) ?? null;
+  }
   async getPolicyStatus(identity: ComplianceIdentity, runId: string) {
     const run = await this.getRun(identity, runId);
     if (!run) return null;
