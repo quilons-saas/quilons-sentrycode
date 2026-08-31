@@ -400,6 +400,14 @@ export interface SentryCodeConfig {
     tokenIssuer: string;
     tokenAudience: string;
   };
+  craReporting: {
+    enabled: boolean;
+    endpoint: string;
+    tokenEnv: string;
+    timeoutMs: number;
+    severities: Severity[];
+    findingTypes: string[];
+  };
   offline: {
     enabled: boolean;
     requireSignedIntelligenceBundles: boolean;

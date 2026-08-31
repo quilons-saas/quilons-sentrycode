@@ -78,6 +78,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
   const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
   const compliance = raw.compliance === undefined ? {} : asObject(raw.compliance, 'compliance');
+  const craReporting = raw.craReporting === undefined ? {} : asObject(raw.craReporting, 'craReporting');
   const offline = raw.offline === undefined ? {} : asObject(raw.offline, 'offline');
   const integrity = raw.integrity === undefined ? {} : asObject(raw.integrity, 'integrity');
   const operations = raw.operations === undefined ? {} : asObject(raw.operations, 'operations');
@@ -274,6 +275,18 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       tokenIssuer: typeof compliance.tokenIssuer === 'string' ? compliance.tokenIssuer : DEFAULT_CONFIG.compliance.tokenIssuer,
       tokenAudience: typeof compliance.tokenAudience === 'string' ? compliance.tokenAudience : DEFAULT_CONFIG.compliance.tokenAudience
     },
+    craReporting: {
+      enabled: typeof craReporting.enabled === 'boolean' ? craReporting.enabled : DEFAULT_CONFIG.craReporting.enabled,
+      endpoint: typeof craReporting.endpoint === 'string' ? craReporting.endpoint : DEFAULT_CONFIG.craReporting.endpoint,
+      tokenEnv: typeof craReporting.tokenEnv === 'string' ? craReporting.tokenEnv : DEFAULT_CONFIG.craReporting.tokenEnv,
+      timeoutMs: typeof craReporting.timeoutMs === 'number' && craReporting.timeoutMs >= 0 ? craReporting.timeoutMs : DEFAULT_CONFIG.craReporting.timeoutMs,
+      severities: (() => {
+        const values = stringArray(craReporting.severities, DEFAULT_CONFIG.craReporting.severities, 'craReporting.severities');
+        if (values.some((value) => !VALID_SEVERITIES.has(value as Severity))) throw new Error('craReporting.severities must contain valid severities');
+        return values as Severity[];
+      })(),
+      findingTypes: stringArray(craReporting.findingTypes, DEFAULT_CONFIG.craReporting.findingTypes, 'craReporting.findingTypes')
+    },
     offline: {
       enabled: typeof offline.enabled === 'boolean' ? offline.enabled : DEFAULT_CONFIG.offline.enabled,
       requireSignedIntelligenceBundles: typeof offline.requireSignedIntelligenceBundles === 'boolean' ? offline.requireSignedIntelligenceBundles : DEFAULT_CONFIG.offline.requireSignedIntelligenceBundles,
@@ -343,6 +356,8 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
   if (env.SENTRYCODE_COMPLIANCE_PROJECT !== undefined) next.compliance.project = env.SENTRYCODE_COMPLIANCE_PROJECT;
   if (env.SENTRYCODE_COMPLIANCE_ENDPOINT !== undefined) next.compliance.endpoint = env.SENTRYCODE_COMPLIANCE_ENDPOINT;
   if (env.SENTRYCODE_DISABLE_COMPLIANCE_PUBLISH === 'true') next.compliance.enabled = false;
+  if (env.SENTRYCODE_CRA_ENDPOINT !== undefined) next.craReporting.endpoint = env.SENTRYCODE_CRA_ENDPOINT;
+  if (env.SENTRYCODE_DISABLE_CRA_REPORTING === 'true') next.craReporting.enabled = false;
   if (env.SENTRYCODE_OFFLINE === 'true') next.offline.enabled = true;
   return next;
 }

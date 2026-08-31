@@ -185,6 +185,14 @@
     "tokenIssuer": "quilons-compliance",
     "tokenAudience": "quilons.sentrycode"
   },
+  "craReporting": {
+    "enabled": false,
+    "endpoint": "",
+    "tokenEnv": "SENTRYCODE_CRA_TOKEN",
+    "timeoutMs": 15000,
+    "severities": ["high", "critical"],
+    "findingTypes": []
+  },
   "offline": {
     "enabled": true,
     "requireSignedIntelligenceBundles": false,

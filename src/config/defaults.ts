@@ -65,6 +65,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   monorepo: { enabled: true, serviceRoots: [], discoverWorkspaces: true },
   incremental: { enabled: true, baseRef: '', headRef: 'HEAD', cacheFile: '.sentrycode/cache/incremental.json', scannerTimeoutMs: 120000 },
   compliance: { enabled: false, tenant: '', project: '', storeDirectory: '.sentrycode/compliance', endpoint: '', tokenEnv: 'SENTRYCODE_COMPLIANCE_TOKEN', timeoutMs: 15000, listenHost: '127.0.0.1', listenPort: 7786, apiTokenEnv: 'SENTRYCODE_PLUGIN_API_TOKEN', authMode: 'static', hmacSecretEnv: 'SENTRYCODE_PLUGIN_HMAC_SECRET', tokenIssuer: 'quilons-compliance', tokenAudience: 'quilons.sentrycode' },
+  craReporting: { enabled: false, endpoint: '', tokenEnv: 'SENTRYCODE_CRA_TOKEN', timeoutMs: 15000, severities: ['high', 'critical'], findingTypes: [] },
   offline: { enabled: false, requireSignedIntelligenceBundles: false, intelligencePublicKeyFile: '' },
   integrity: { requireSignedConfig: false, configSignatureFile: '.sentrycode/config.sig.json', publicKeyFile: '', auditLogFile: '.sentrycode/audit/events.jsonl', evidenceManifests: true, evidenceSigningPrivateKeyFile: '', evidenceSigningPublicKeyFile: '' },
   operations: { backupDirectory: '.sentrycode/backups', retentionDays: 365 },
