@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ApplicationStateStore } from '../src/application/store.js';
-import type { ApplicationAuditRecord, ApplicationStateStatus, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from '../src/application/types.js';
+import type { ApplicationAuditRecord, ApplicationStateStatus, CraReportDeliveryEnqueueResult, CraReportDeliveryRecord, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from '../src/application/types.js';
 import { SentryCodeAdminService } from '../src/application/admin-service.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 
@@ -20,7 +20,11 @@ class MemoryStore implements ApplicationStateStore {
   async listWaivers(t:string,p:string){return this.waivers.filter(x=>x.tenant===t&&x.project===p)} async createWaiver(v:WaiverWorkflowRecord){this.waivers.push(v);return v}
   async transitionWaiver(id:string,status:'active'|'rejected'|'revoked',actor:string){const x=this.waivers.find(w=>w.id===id);if(!x)return null;x.status=status;x.approver=status==='active'?actor:x.approver;x.decidedAt=new Date().toISOString();return x}
   async listIntegrations(t:string,p:string){return this.integrations.filter(x=>x.tenant===t&&x.project===p)} async upsertIntegration(v:Omit<IntegrationRecord,'updatedAt'|'updatedBy'>,actor:string){const x={...v,updatedAt:new Date().toISOString(),updatedBy:actor};this.integrations.push(x);return x}
-  async listPrincipals(){return this.principals} async upsertPrincipal(v:PrincipalRecord){this.principals.push(v);return v} async appendAudit(v:ApplicationAuditRecord){this.audits.push(v)} async listAudit(){return this.audits} async close(){}
+  async listPrincipals(){return this.principals} async upsertPrincipal(v:PrincipalRecord){this.principals.push(v);return v} async appendAudit(v:ApplicationAuditRecord){this.audits.push(v)} async listAudit(){return this.audits}
+  async enqueueCraReportDelivery():Promise<CraReportDeliveryEnqueueResult>{throw new Error('not used')}
+  async listPendingCraReportDeliveries():Promise<CraReportDeliveryRecord[]>{return []}
+  async recordCraReportDeliveryAttempt():Promise<CraReportDeliveryRecord|null>{return null}
+  async close(){}
 }
 
 test('UI-managed scanner and policy state materialize to repository contracts', async()=>{

@@ -190,8 +190,13 @@
     "endpoint": "",
     "tokenEnv": "SENTRYCODE_CRA_TOKEN",
     "timeoutMs": 15000,
-    "severities": ["high", "critical"],
-    "findingTypes": []
+    "severities": [
+      "high",
+      "critical"
+    ],
+    "findingTypes": [],
+    "maxAttempts": 5,
+    "retryDelayMs": 30000
   },
   "offline": {
     "enabled": true,

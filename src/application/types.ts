@@ -26,3 +26,11 @@ export interface IntegrationRecord {
 export interface PrincipalRecord { id: string; subject: string; displayName: string; role: AdminRole; enabled: boolean; createdAt: string; updatedAt: string; }
 export interface ApplicationAuditRecord { id: string; at: string; actor: string; action: string; entityType: string; entityId: string; detail: Record<string, unknown>; }
 export interface ApplicationStateStatus { configured: boolean; connected: boolean; schemaVersion: number | null; detail: string; }
+
+export type CraReportDeliveryStatus = 'pending' | 'delivered' | 'failed';
+export interface CraReportDeliveryRecord {
+  reportId: string; tenant: string; project: string; findingId: string; runId: string; payload: Record<string, unknown>;
+  status: CraReportDeliveryStatus; attemptCount: number; responseStatus: number | null; lastAttemptAt: string | null;
+  nextAttemptAt: string | null; lastError: string | null; deliveredAt: string | null; createdAt: string; updatedAt: string;
+}
+export interface CraReportDeliveryEnqueueResult { record: CraReportDeliveryRecord; created: boolean; }

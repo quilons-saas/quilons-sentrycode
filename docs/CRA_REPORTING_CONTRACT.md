@@ -75,3 +75,32 @@ Slice 21 adds pure candidate selection over the existing policy-applied SentryCo
 - A selected finding must already have authoritative SentryCode evidence linked through `EvidenceRecord.findingIds`; report creation fails closed when that link is absent.
 
 This slice only selects and builds report contracts. Delivery, retry and acknowledgement remain deferred. Existing `/v1` read APIs are unchanged.
+
+## Durable CRA delivery (Slice 22)
+
+CRA proactive delivery reuses SentryCode's existing PostgreSQL application-state layer. It does not create a second evidence store.
+
+When `craReporting.enabled` is true, SentryCode first persists the normal authoritative Compliance publication so the report's existing `/v1/runs/{runId}/evidence` reference remains resolvable. The CRA delivery queue stores only the versioned technical-finding report plus delivery state.
+
+The PostgreSQL migration `002_cra_report_delivery.sql` adds `sentrycode_cra_report_delivery` with stable `report_id` identity, tenant/project scope, attempt state, response status, retry timing and error state. The stable Slice 20/21 report ID is the idempotency key; a delivered report is not selected for delivery again.
+
+Delivery reuses the existing HTTP publishing implementation in `src/compliance/publisher.ts`: the shared POST helper supplies the configured bearer token, capability-version header and timeout. CRA delivery does not invent a second HTTP/authentication stack.
+
+`craReporting` now also supports:
+
+```json
+{
+  "maxAttempts": 5,
+  "retryDelayMs": 30000
+}
+```
+
+Failed reports remain in PostgreSQL and can be selected on a later SentryCode execution after the retry delay, without rebuilding or rerunning the original scan. Selection stops after `maxAttempts`, providing a bounded retry policy.
+
+Delivery state is deliberately separate from the technical scan decision. A CRA endpoint or PostgreSQL outage is surfaced as CRA integration unavailability and audited, but it does not rewrite a SentryCode PASS/WARN/FAIL result.
+
+The existing tamper-evident enterprise audit chain records CRA queue creation, successful delivery, delivery failure and integration unavailability. The PostgreSQL queue is operational state only; authoritative findings/evidence remain in the existing SentryCode evidence plane.
+
+A successful HTTP response is the currently defined delivery acknowledgement and its status code is retained. No CRA-specific receipt identifier is parsed because no authoritative CRA receipt response contract has been defined; adding one must follow the normal versioned-contract process rather than guessing an API field.
+
+All existing `/v1` Compliance read APIs remain unchanged and continue to be the authoritative pull path for CRA when it needs full evidence.

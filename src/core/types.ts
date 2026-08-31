@@ -405,6 +405,8 @@ export interface SentryCodeConfig {
     endpoint: string;
     tokenEnv: string;
     timeoutMs: number;
+    maxAttempts: number;
+    retryDelayMs: number;
     severities: Severity[];
     findingTypes: string[];
   };

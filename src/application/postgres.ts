@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Pool, PoolClient } from 'pg';
 import type { ApplicationStateStore } from './store.js';
-import type { ApplicationAuditRecord, ApplicationStateStatus, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
+import type { ApplicationAuditRecord, ApplicationStateStatus, CraReportDeliveryEnqueueResult, CraReportDeliveryRecord, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
 
 function rowRepo(row: any): RegisteredRepository { return { id: row.id, tenant: row.tenant, project: row.project, name: row.name, rootPath: row.root_path, defaultBranch: row.default_branch, enabled: row.enabled, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
 function rowScanner(row: any): ManagedScannerSetting { return { repositoryId: row.repository_id, scanner: row.scanner, enabled: row.enabled, required: row.required, failureMode: row.failure_mode, updatedAt: new Date(row.updated_at).toISOString(), updatedBy: row.updated_by }; }
@@ -12,6 +12,7 @@ function rowWaiver(row: any): WaiverWorkflowRecord { return { id: row.id, tenant
 function rowIntegration(row: any): IntegrationRecord { return { id: row.id, tenant: row.tenant, project: row.project, kind: row.kind, name: row.name, enabled: row.enabled, configuration: row.configuration ?? {}, secretReference: row.secret_reference, status: row.status, updatedAt: new Date(row.updated_at).toISOString(), updatedBy: row.updated_by }; }
 function rowPrincipal(row: any): PrincipalRecord { return { id: row.id, subject: row.subject, displayName: row.display_name, role: row.role, enabled: row.enabled, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
 function rowAudit(row: any): ApplicationAuditRecord { return { id: row.id, at: new Date(row.at).toISOString(), actor: row.actor, action: row.action, entityType: row.entity_type, entityId: row.entity_id, detail: row.detail ?? {} }; }
+function rowCraDelivery(row: any): CraReportDeliveryRecord { return { reportId: row.report_id, tenant: row.tenant, project: row.project, findingId: row.finding_id, runId: row.run_id, payload: row.payload ?? {}, status: row.status, attemptCount: row.attempt_count, responseStatus: row.response_status ?? null, lastAttemptAt: row.last_attempt_at ? new Date(row.last_attempt_at).toISOString() : null, nextAttemptAt: row.next_attempt_at ? new Date(row.next_attempt_at).toISOString() : null, lastError: row.last_error ?? null, deliveredAt: row.delivered_at ? new Date(row.delivered_at).toISOString() : null, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
 
 export class PostgresApplicationStateStore implements ApplicationStateStore {
   constructor(private readonly pool: Pool) {}
@@ -23,11 +24,14 @@ export class PostgresApplicationStateStore implements ApplicationStateStore {
   }
   async migrate(): Promise<number> {
     const here = dirname(fileURLToPath(import.meta.url));
-    const candidates = [resolve(here, '../../migrations/001_application_state.sql'), resolve(process.cwd(), 'migrations/001_application_state.sql')];
-    let sql = '';
-    for (const candidate of candidates) { try { sql = await readFile(candidate, 'utf8'); break; } catch {} }
-    if (!sql) throw new Error('SentryCode migration 001_application_state.sql not found');
-    await this.pool.query(sql); return 1;
+    for (const migration of ['001_application_state.sql', '002_cra_report_delivery.sql']) {
+      const candidates = [resolve(here, `../../migrations/${migration}`), resolve(process.cwd(), `migrations/${migration}`)];
+      let sql = '';
+      for (const candidate of candidates) { try { sql = await readFile(candidate, 'utf8'); break; } catch {} }
+      if (!sql) throw new Error(`SentryCode migration ${migration} not found`);
+      await this.pool.query(sql);
+    }
+    return 2;
   }
   async listRepositories(tenant: string, project: string) { const r=await this.pool.query('SELECT * FROM sentrycode_repositories WHERE tenant=$1 AND project=$2 ORDER BY name',[tenant,project]); return r.rows.map(rowRepo); }
   async upsertRepository(v: Omit<RegisteredRepository,'createdAt'|'updatedAt'>, actor: string) { const r=await this.pool.query(`INSERT INTO sentrycode_repositories(id,tenant,project,name,root_path,default_branch,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,root_path=excluded.root_path,default_branch=excluded.default_branch,enabled=excluded.enabled,updated_at=now() RETURNING *`,[v.id,v.tenant,v.project,v.name,v.rootPath,v.defaultBranch,v.enabled]); await this.audit(actor,'repository.upsert','repository',v.id,{tenant:v.tenant,project:v.project}); return rowRepo(r.rows[0]); }
@@ -44,6 +48,17 @@ export class PostgresApplicationStateStore implements ApplicationStateStore {
   async upsertPrincipal(v:PrincipalRecord){ const r=await this.pool.query(`INSERT INTO sentrycode_principals(id,subject,display_name,role,enabled,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,display_name=excluded.display_name,role=excluded.role,enabled=excluded.enabled,updated_at=now() RETURNING *`,[v.id,v.subject,v.displayName,v.role,v.enabled,v.createdAt,v.updatedAt]); await this.audit(v.subject,'principal.upsert','principal',v.id,{role:v.role,enabled:v.enabled}); return rowPrincipal(r.rows[0]); }
   async appendAudit(v:ApplicationAuditRecord){ await this.pool.query(`INSERT INTO sentrycode_application_audit(id,at,actor,action,entity_type,entity_id,detail) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)`,[v.id,v.at,v.actor,v.action,v.entityType,v.entityId,JSON.stringify(v.detail)]); }
   async listAudit(limit=200){ const r=await this.pool.query('SELECT * FROM sentrycode_application_audit ORDER BY at DESC LIMIT $1',[limit]); return r.rows.map(rowAudit); }
+  async enqueueCraReportDelivery(v: Pick<CraReportDeliveryRecord,'reportId'|'tenant'|'project'|'findingId'|'runId'|'payload'>){
+    const inserted=await this.pool.query(`INSERT INTO sentrycode_cra_report_delivery(report_id,tenant,project,finding_id,run_id,payload,status) VALUES($1,$2,$3,$4,$5,$6::jsonb,'pending') ON CONFLICT(report_id) DO NOTHING RETURNING *`,[v.reportId,v.tenant,v.project,v.findingId,v.runId,JSON.stringify(v.payload)]);
+    if(inserted.rows[0]) return { record: rowCraDelivery(inserted.rows[0]), created: true };
+    const existing=await this.pool.query('SELECT * FROM sentrycode_cra_report_delivery WHERE report_id=$1',[v.reportId]);
+    if(!existing.rows[0]) throw new Error(`CRA delivery record ${v.reportId} disappeared after enqueue`);
+    const row=rowCraDelivery(existing.rows[0]);
+    if(row.tenant!==v.tenant||row.project!==v.project||row.findingId!==v.findingId||row.runId!==v.runId) throw new Error(`CRA delivery identity mismatch for ${v.reportId}`);
+    return { record: row, created: false };
+  }
+  async listPendingCraReportDeliveries(tenant:string,project:string,maxAttempts:number,now:string,limit=100){ const r=await this.pool.query(`SELECT * FROM sentrycode_cra_report_delivery WHERE tenant=$1 AND project=$2 AND status IN ('pending','failed') AND attempt_count<$3 AND (next_attempt_at IS NULL OR next_attempt_at<=$4::timestamptz) ORDER BY created_at, report_id LIMIT $5`,[tenant,project,maxAttempts,now,limit]); return r.rows.map(rowCraDelivery); }
+  async recordCraReportDeliveryAttempt(reportId:string,v:{delivered:boolean;responseStatus?:number;error?:string;nextAttemptAt?:string}){ const r=await this.pool.query(`UPDATE sentrycode_cra_report_delivery SET status=CASE WHEN $2 THEN 'delivered' ELSE 'failed' END,attempt_count=attempt_count+1,response_status=$3,last_attempt_at=now(),next_attempt_at=CASE WHEN $2 THEN NULL ELSE $4::timestamptz END,last_error=CASE WHEN $2 THEN NULL ELSE $5 END,delivered_at=CASE WHEN $2 THEN now() ELSE delivered_at END,updated_at=now() WHERE report_id=$1 AND status<>'delivered' RETURNING *`,[reportId,v.delivered,v.responseStatus??null,v.nextAttemptAt??null,v.error??null]); return r.rows[0]?rowCraDelivery(r.rows[0]):null; }
   async close(){ await this.pool.end(); }
   private async audit(actor:string,action:string,entityType:string,entityId:string,detail:Record<string,unknown>){ const at=new Date().toISOString(); const id=`${action}:${entityId}:${Date.now()}:${Math.random().toString(16).slice(2)}`; await this.appendAudit({id,at,actor,action,entityType,entityId,detail}); }
 }

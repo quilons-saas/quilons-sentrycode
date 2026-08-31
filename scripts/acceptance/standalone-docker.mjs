@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -19,6 +19,12 @@ const adminToken = randomBytes(32).toString('hex');
 const postgresPassword = randomBytes(32).toString('base64url');
 let composeUp = false;
 let baseUrl = '';
+
+async function expectedSchemaVersion() {
+  const migrationsDir = resolve(root, 'migrations');
+  const files = await readdir(migrationsDir);
+  return files.filter((name) => /^\d+_.*\.sql$/.test(name)).length;
+}
 
 function pass(message) { process.stdout.write(`PASS ${message}\n`); }
 function info(message) { process.stdout.write(`INFO ${message}\n`); }
@@ -124,9 +130,10 @@ async function main() {
   info(`acceptance endpoint: ${baseUrl}`);
   await compose(['up', '-d', '--build']);
   composeUp = true;
+  const expectedSchema = await expectedSchemaVersion();
   const ready = await waitReady();
-  if (!ready.ready || !ready.databaseReady || Number(ready.schemaVersion) !== 1) fail(`unexpected readiness payload: ${JSON.stringify(ready)}`);
-  pass('clean Docker deployment is ready with PostgreSQL schema 1');
+  if (!ready.ready || !ready.databaseReady || Number(ready.schemaVersion) !== expectedSchema) fail(`unexpected readiness payload: ${JSON.stringify(ready)}; expected schema ${expectedSchema}`);
+  pass(`clean Docker deployment is ready with PostgreSQL schema ${expectedSchema}`);
 
   await request('/api/v1/health', { expected: 200 });
   await request('/api/v1/status', { expected: 401 });
@@ -141,7 +148,7 @@ async function main() {
   pass('viewer/admin RBAC is enforced by the server');
 
   const state = await request('/api/v1/admin/state', { expected: 200 });
-  if (!state.database?.connected || Number(state.database?.schemaVersion) !== 1) fail(`application state unavailable: ${JSON.stringify(state)}`);
+  if (!state.database?.connected || Number(state.database?.schemaVersion) !== expectedSchema) fail(`application state unavailable: ${JSON.stringify(state)}; expected schema ${expectedSchema}`);
   const repository = await request('/api/v1/admin/repositories', {
     token: adminToken,
     method: 'POST',

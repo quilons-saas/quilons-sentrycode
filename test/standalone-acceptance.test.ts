@@ -18,6 +18,9 @@ test('standalone Docker acceptance harness is isolated and covers restart persis
   assert.match(script,/SENTRYCODE_UI_ADMIN_TOKEN: adminToken/);
   assert.match(script,/SENTRYCODE_UI_TOKEN: viewerToken/);
   assert.match(script,/SENTRYCODE_OIDC_ISSUER: ''/);
+  assert.match(script,/expectedSchemaVersion/);
+  assert.match(script,/migrations/);
+  assert.doesNotMatch(script,/schemaVersion\) !== 1/);
 });
 
 test('production Compose applies defense-in-depth runtime hardening', async()=>{

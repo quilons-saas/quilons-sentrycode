@@ -1,4 +1,4 @@
-import type { ApplicationAuditRecord, ApplicationStateStatus, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
+import type { ApplicationAuditRecord, ApplicationStateStatus, CraReportDeliveryEnqueueResult, CraReportDeliveryRecord, IntegrationRecord, ManagedPolicyAssignment, ManagedScannerSetting, PrincipalRecord, RegisteredRepository, WaiverWorkflowRecord } from './types.js';
 
 export interface ApplicationStateStore {
   status(): Promise<ApplicationStateStatus>;
@@ -18,6 +18,9 @@ export interface ApplicationStateStore {
   upsertPrincipal(value: PrincipalRecord): Promise<PrincipalRecord>;
   appendAudit(value: ApplicationAuditRecord): Promise<void>;
   listAudit(limit?: number): Promise<ApplicationAuditRecord[]>;
+  enqueueCraReportDelivery(value: Pick<CraReportDeliveryRecord,'reportId'|'tenant'|'project'|'findingId'|'runId'|'payload'>): Promise<CraReportDeliveryEnqueueResult>;
+  listPendingCraReportDeliveries(tenant: string, project: string, maxAttempts: number, now: string, limit?: number): Promise<CraReportDeliveryRecord[]>;
+  recordCraReportDeliveryAttempt(reportId: string, value: { delivered: boolean; responseStatus?: number; error?: string; nextAttemptAt?: string }): Promise<CraReportDeliveryRecord | null>;
   close(): Promise<void>;
 }
 
@@ -40,5 +43,8 @@ export class DisabledApplicationStateStore implements ApplicationStateStore {
   async upsertPrincipal(): Promise<PrincipalRecord> { return this.no(); }
   async appendAudit(): Promise<void> { return; }
   async listAudit(): Promise<ApplicationAuditRecord[]> { return []; }
+  async enqueueCraReportDelivery(): Promise<CraReportDeliveryEnqueueResult> { return this.no(); }
+  async listPendingCraReportDeliveries(): Promise<CraReportDeliveryRecord[]> { return []; }
+  async recordCraReportDeliveryAttempt(): Promise<CraReportDeliveryRecord | null> { return this.no(); }
   async close(): Promise<void> { return; }
 }

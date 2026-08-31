@@ -33,7 +33,7 @@ import { complianceIdentity } from '../compliance/scope.js';
 import { loadPluginManifest } from '../compliance/manifest.js';
 import { buildPublication } from '../compliance/publication.js';
 import { LocalComplianceStore } from '../compliance/store.js';
-import { HttpCompliancePublisher } from '../compliance/publisher.js';
+import { HttpCompliancePublisher, HttpCraFindingPublisher } from '../compliance/publisher.js';
 import { SentryCodeComplianceService } from '../compliance/service.js';
 import { startComplianceServer } from '../compliance/server.js';
 import { buildVulnerabilityBundle, importVulnerabilityBundle } from '../enterprise/intelligence.js';
@@ -49,6 +49,8 @@ import { startWebServer } from '../web/server.js';
 import { createApplicationStateStore } from '../application/factory.js';
 import { openBrowser } from '../web/open-browser.js';
 import { GerritProvider, gerritAuthFromEnv, gerritReviewMessage } from '../git/gerrit-provider.js';
+import { buildCraFindingReports } from '../compliance/cra-reporting.js';
+import { deliverPendingCraFindingReports, enqueueCraFindingReports } from '../compliance/cra-delivery.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
@@ -350,17 +352,61 @@ function resolveComplianceIdentity(config: SentryCodeConfig, options: CommonOpti
   return complianceIdentity(options.tenant ?? config.compliance.tenant, options.project ?? config.compliance.project);
 }
 
-async function publishCompliance(root: string, config: SentryCodeConfig, options: CommonOptions, report: ScanReport) {
+async function publishCompliance(root: string, config: SentryCodeConfig, options: CommonOptions, report: ScanReport, publishRemote = true) {
   const identity = resolveComplianceIdentity(config, options);
   const manifest = await loadPluginManifest(root);
   const publication = buildPublication(identity, report, manifest.productVersion);
   const store = new LocalComplianceStore(root, config.compliance.storeDirectory, { ...(config.integrity.evidenceSigningPrivateKeyFile ? { privateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {}), ...(config.integrity.evidenceSigningPublicKeyFile ? { publicKeyFile: config.integrity.evidenceSigningPublicKeyFile } : {}) });
   await store.publish(identity, publication);
-  if (config.compliance.endpoint) {
+  if (publishRemote && config.compliance.endpoint) {
     const token = process.env[config.compliance.tokenEnv] ?? '';
     await new HttpCompliancePublisher(config.compliance.endpoint, token, config.compliance.timeoutMs).publish(publication);
   }
   return publication;
+}
+
+async function reportCraFindings(root: string, config: SentryCodeConfig, options: CommonOptions, report: ScanReport, productVersion: string) {
+  if (!config.craReporting.enabled) return { queued: 0, attempted: 0, delivered: 0, failed: 0 };
+  let store: Awaited<ReturnType<typeof createApplicationStateStore>> | null = null;
+  try {
+    const identity = resolveComplianceIdentity(config, options);
+    if (!config.craReporting.endpoint.trim()) throw new Error('craReporting.endpoint is required when CRA reporting is enabled');
+    const reports = buildCraFindingReports({ identity, report, productVersion, materiality: { severities: config.craReporting.severities, findingTypes: config.craReporting.findingTypes } });
+    store = await createApplicationStateStore();
+    const status = await store.status();
+    if (!status.connected || (status.schemaVersion ?? 0) < 2) {
+      throw new Error(!status.connected ? status.detail : `PostgreSQL schema ${status.schemaVersion ?? 0} does not include CRA delivery state`);
+    }
+    const queued = await enqueueCraFindingReports(store, reports);
+    for (const item of queued.filter((value) => value.created)) {
+      await appendAuditEvent(root, config.integrity.auditLogFile, 'cra.report.queued', {
+        reportId: item.record.reportId, findingId: item.record.findingId, runId: item.record.runId, tenant: item.record.tenant, project: item.record.project
+      }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+    }
+    const token = process.env[config.craReporting.tokenEnv] ?? '';
+    const result = await deliverPendingCraFindingReports({
+      store,
+      publisher: new HttpCraFindingPublisher(config.craReporting.endpoint, token, config.craReporting.timeoutMs),
+      tenant: identity.tenant,
+      project: identity.project,
+      options: { maxAttempts: config.craReporting.maxAttempts, retryDelayMs: config.craReporting.retryDelayMs },
+      root,
+      auditLogFile: config.integrity.auditLogFile,
+      ...(config.integrity.evidenceSigningPrivateKeyFile ? { auditSigningPrivateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {})
+    });
+    if (result.failed > 0) console.error(`CRA reporting delivery pending: ${result.failed} report(s) failed and remain eligible for governed retry`);
+    return { queued: queued.filter((value) => value.created).length, ...result };
+  } catch (error) {
+    const reason = (error as Error).message;
+    console.error(`CRA reporting unavailable: ${reason}`);
+    try {
+      const identity = resolveComplianceIdentity(config, options);
+      await appendAuditEvent(root, config.integrity.auditLogFile, 'cra.report.delivery_unavailable', { tenant: identity.tenant, project: identity.project, reason }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+    } catch {}
+    return { queued: 0, attempted: 0, delivered: 0, failed: 0 };
+  } finally {
+    if (store) await store.close().catch(() => undefined);
+  }
 }
 
 async function publishGerrit(root:string,config:SentryCodeConfig,ci:ReturnType<typeof detectCi>,report:ScanReport,decision:ScanReport['policy']['decision']) {
@@ -637,16 +683,30 @@ async function main(): Promise<number> {
       ...(options.service ? { service: options.service } : {})
     });
 
+    let compliancePublication: Awaited<ReturnType<typeof publishCompliance>> | null = null;
     if (options.command === 'compliance-publish' || config.compliance.enabled) {
-      const publication = await publishCompliance(repository.root, config, options, report);
-      if (options.command === 'compliance-publish') {
-        const rendered = options.format === 'json'
-          ? `${JSON.stringify(publication, null, 2)}\n`
-          : `SentryCode Compliance publication\nRun: ${publication.summary.runId}\nTenant: ${publication.summary.tenant}\nProject: ${publication.summary.project}\nDecision: ${publication.summary.decision}\nEvidence: ${publication.summary.evidenceCount}\n`;
-        if (options.output) console.log(`Compliance publication written: ${await writeOutput(repository.root, options.output, rendered)}`);
-        else process.stdout.write(rendered);
-        return publication.summary.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
+      compliancePublication = await publishCompliance(repository.root, config, options, report, true);
+    } else if (config.craReporting.enabled) {
+      try {
+        compliancePublication = await publishCompliance(repository.root, config, options, report, false);
+      } catch (error) {
+        const reason = (error as Error).message;
+        console.error(`CRA reporting unavailable: ${reason}`);
+        try {
+          await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'cra.report.delivery_unavailable', { tenant: config.compliance.tenant, project: config.compliance.project, reason }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+        } catch {}
       }
+    }
+    if (config.craReporting.enabled && compliancePublication) {
+      await reportCraFindings(repository.root, config, options, report, compliancePublication.evidence.producer.version);
+    }
+    if (options.command === 'compliance-publish' && compliancePublication) {
+      const rendered = options.format === 'json'
+        ? `${JSON.stringify(compliancePublication, null, 2)}\n`
+        : `SentryCode Compliance publication\nRun: ${compliancePublication.summary.runId}\nTenant: ${compliancePublication.summary.tenant}\nProject: ${compliancePublication.summary.project}\nDecision: ${compliancePublication.summary.decision}\nEvidence: ${compliancePublication.summary.evidenceCount}\n`;
+      if (options.output) console.log(`Compliance publication written: ${await writeOutput(repository.root, options.output, rendered)}`);
+      else process.stdout.write(rendered);
+      return compliancePublication.summary.decision === 'FAIL' ? EXIT_CODES.POLICY_FAILURE : EXIT_CODES.PASS;
     }
 
     if (options.command === 'release-check') {

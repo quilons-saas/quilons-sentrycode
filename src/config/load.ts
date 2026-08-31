@@ -280,6 +280,8 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       endpoint: typeof craReporting.endpoint === 'string' ? craReporting.endpoint : DEFAULT_CONFIG.craReporting.endpoint,
       tokenEnv: typeof craReporting.tokenEnv === 'string' ? craReporting.tokenEnv : DEFAULT_CONFIG.craReporting.tokenEnv,
       timeoutMs: typeof craReporting.timeoutMs === 'number' && craReporting.timeoutMs >= 0 ? craReporting.timeoutMs : DEFAULT_CONFIG.craReporting.timeoutMs,
+      maxAttempts: typeof craReporting.maxAttempts === 'number' && Number.isInteger(craReporting.maxAttempts) && craReporting.maxAttempts > 0 ? craReporting.maxAttempts : DEFAULT_CONFIG.craReporting.maxAttempts,
+      retryDelayMs: typeof craReporting.retryDelayMs === 'number' && craReporting.retryDelayMs >= 0 ? craReporting.retryDelayMs : DEFAULT_CONFIG.craReporting.retryDelayMs,
       severities: (() => {
         const values = stringArray(craReporting.severities, DEFAULT_CONFIG.craReporting.severities, 'craReporting.severities');
         if (values.some((value) => !VALID_SEVERITIES.has(value as Severity))) throw new Error('craReporting.severities must contain valid severities');
