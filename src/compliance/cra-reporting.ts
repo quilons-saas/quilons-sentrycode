@@ -4,6 +4,7 @@ import type { ComplianceIdentity } from './contracts.js';
 import { COMPLIANCE_API_VERSION, SENTRYCODE_PLUGIN_ID } from './contracts.js';
 
 export const CRA_REPORTING_CONTRACT_VERSION = '1.0.0' as const;
+
 export interface CraEvidenceReference {
   apiVersion: typeof COMPLIANCE_API_VERSION;
   runId: string;
@@ -54,9 +55,42 @@ export interface CraFindingReport {
   };
 }
 
+export interface CraFindingMateriality {
+  severities: Severity[];
+  findingTypes: string[];
+}
+
 function nonEmpty(value: string, label: string): string {
   if (!value.trim()) throw new Error(`${label} is required`);
   return value;
+}
+
+function normalizedTypes(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+/**
+ * Applies the configured technical materiality filter only. This deliberately
+ * performs no CRA regulatory mapping: severity and SentryCode finding type are
+ * the existing technical facts used to decide whether a finding is a candidate
+ * for proactive reporting.
+ *
+ * An empty findingTypes list means all finding types are eligible. An empty
+ * severities list means no findings are eligible.
+ */
+export function isCraReportableFinding(appliedFinding: AppliedFinding, materiality: CraFindingMateriality): boolean {
+  if (!materiality.severities.includes(appliedFinding.finding.severity)) return false;
+  const types = normalizedTypes(materiality.findingTypes);
+  return types.size === 0 || types.has(appliedFinding.finding.type.trim().toLowerCase());
+}
+
+/**
+ * Selects CRA-reporting candidates from the already policy-applied findings in
+ * a completed ScanReport. Waived findings remain technical facts and therefore
+ * remain selectable; their governed waiver state is carried in the report.
+ */
+export function selectCraReportableFindings(report: ScanReport, materiality: CraFindingMateriality): AppliedFinding[] {
+  return report.policy.findings.filter((item) => isCraReportableFinding(item, materiality));
 }
 
 /**
@@ -132,4 +166,24 @@ export function buildCraFindingReport(args: {
       reportedAt
     }
   };
+}
+
+/**
+ * Converts only the selected material technical findings into CRA reporting
+ * contracts. Evidence linkage remains fail-closed through buildCraFindingReport.
+ */
+export function buildCraFindingReports(args: {
+  identity: ComplianceIdentity;
+  report: ScanReport;
+  productVersion: string;
+  materiality: CraFindingMateriality;
+  reportedAt?: string;
+}): CraFindingReport[] {
+  return selectCraReportableFindings(args.report, args.materiality).map((appliedFinding) => buildCraFindingReport({
+    identity: args.identity,
+    report: args.report,
+    appliedFinding,
+    productVersion: args.productVersion,
+    ...(args.reportedAt ? { reportedAt: args.reportedAt } : {})
+  }));
 }

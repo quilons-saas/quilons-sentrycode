@@ -63,3 +63,15 @@ This slice does not modify the existing endpoints, including:
 - `GET /v1/runs/{runId}/waivers`
 
 Proactive selection and delivery to CRA are intentionally deferred to later slices.
+
+## Material finding selection
+
+Slice 21 adds pure candidate selection over the existing policy-applied SentryCode findings. It does not introduce a CRA regulatory mapping layer.
+
+- `craReporting.severities` limits candidates by the existing technical finding severity.
+- `craReporting.findingTypes` limits candidates by the existing SentryCode finding type. An empty list means all finding types.
+- An empty severity list selects no findings.
+- Waived findings remain technical facts and may still be reported; their existing waiver status and waiver ID are carried in the report.
+- A selected finding must already have authoritative SentryCode evidence linked through `EvidenceRecord.findingIds`; report creation fails closed when that link is absent.
+
+This slice only selects and builds report contracts. Delivery, retry and acknowledgement remain deferred. Existing `/v1` read APIs are unchanged.
