@@ -34,10 +34,33 @@ export class HttpCompliancePublisher implements CompliancePublisher {
 }
 
 export class HttpCraFindingPublisher implements CraFindingPublisher {
-  constructor(private readonly endpoint: string, private readonly token: string, private readonly timeoutMs: number) {}
+  constructor(
+    private readonly endpoint: string,
+    private readonly token: string,
+    private readonly timeoutMs: number,
+    private readonly assessmentId: string
+  ) {}
 
   async publish(report: CraFindingReport): Promise<{ statusCode: number }> {
-    const statusCode = await postJson(this.endpoint, this.token, this.timeoutMs, report.contractVersion, report);
+    if (!this.assessmentId.trim()) throw new Error("CRA assessment ID is required for finding delivery");
+    const statusCode = await postJson(
+      this.endpoint,
+      this.token,
+      this.timeoutMs,
+      "quilons.service-invocation.v1",
+      {
+        contractVersion: "quilons.service-invocation.v1",
+        tenantId: report.tenant,
+        appId: "quilons-sentrycode",
+        operation: "cra.sentrycode.finding.ingest",
+        actor: {
+          actorType: "SERVICE",
+          actorId: "quilons-sentrycode",
+          permissions: ["cra.sentrycode.ingest"]
+        },
+        input: { assessmentId: this.assessmentId, report }
+      }
+    );
     return { statusCode };
   }
 }

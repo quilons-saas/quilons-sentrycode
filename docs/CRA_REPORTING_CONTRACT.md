@@ -23,6 +23,7 @@ CRA reporting reuses the existing governed Compliance identity (`compliance.tena
   "craReporting": {
     "enabled": false,
     "endpoint": "",
+    "assessmentId": "",
     "tokenEnv": "SENTRYCODE_CRA_TOKEN",
     "timeoutMs": 15000,
     "severities": ["high", "critical"],
@@ -36,6 +37,7 @@ CRA reporting reuses the existing governed Compliance identity (`compliance.tena
 Environment overrides supported by the existing configuration loader pattern:
 
 - `SENTRYCODE_CRA_ENDPOINT`
+- `SENTRYCODE_CRA_ASSESSMENT_ID`
 - `SENTRYCODE_DISABLE_CRA_REPORTING=true`
 
 ## Contract
@@ -123,3 +125,7 @@ GET /v1/runs/{runId}/evidence
 ```
 
 `CraFindingReport.evidenceReference.evidenceIds` remains the authoritative list of evidence records associated with the reported technical finding. CRA may request any of those IDs through the direct evidence route. The report contract itself is unchanged; no duplicate evidence locator representation is added.
+
+## Governed CRA service delivery (2026-09 integration closure)
+
+When proactive delivery is enabled, `craReporting.endpoint` targets the CRA service `/api/v1/invoke` route and `craReporting.assessmentId` explicitly binds the technical finding to the intended CRA assessment. SentryCode sends a `quilons.service-invocation.v1` request for `cra.sentrycode.finding.ingest` using the configured Core-issued bearer token. The report remains the same technical-fact contract: SentryCode does not assert a CRA violation, breach, Article 14 reportability conclusion, or compliance status. CRA owns those interpretations.

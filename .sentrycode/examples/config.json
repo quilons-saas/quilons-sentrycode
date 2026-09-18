@@ -196,7 +196,8 @@
     ],
     "findingTypes": [],
     "maxAttempts": 5,
-    "retryDelayMs": 30000
+    "retryDelayMs": 30000,
+    "assessmentId": ""
   },
   "offline": {
     "enabled": true,

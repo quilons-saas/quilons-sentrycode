@@ -403,6 +403,7 @@ export interface SentryCodeConfig {
   craReporting: {
     enabled: boolean;
     endpoint: string;
+    assessmentId: string;
     tokenEnv: string;
     timeoutMs: number;
     maxAttempts: number;

@@ -371,6 +371,7 @@ async function reportCraFindings(root: string, config: SentryCodeConfig, options
   try {
     const identity = resolveComplianceIdentity(config, options);
     if (!config.craReporting.endpoint.trim()) throw new Error('craReporting.endpoint is required when CRA reporting is enabled');
+    if (!config.craReporting.assessmentId.trim()) throw new Error('craReporting.assessmentId is required when CRA reporting is enabled');
     const reports = buildCraFindingReports({ identity, report, productVersion, materiality: { severities: config.craReporting.severities, findingTypes: config.craReporting.findingTypes } });
     store = await createApplicationStateStore();
     const status = await store.status();
@@ -386,7 +387,7 @@ async function reportCraFindings(root: string, config: SentryCodeConfig, options
     const token = process.env[config.craReporting.tokenEnv] ?? '';
     const result = await deliverPendingCraFindingReports({
       store,
-      publisher: new HttpCraFindingPublisher(config.craReporting.endpoint, token, config.craReporting.timeoutMs),
+      publisher: new HttpCraFindingPublisher(config.craReporting.endpoint, token, config.craReporting.timeoutMs, config.craReporting.assessmentId),
       tenant: identity.tenant,
       project: identity.project,
       options: { maxAttempts: config.craReporting.maxAttempts, retryDelayMs: config.craReporting.retryDelayMs },

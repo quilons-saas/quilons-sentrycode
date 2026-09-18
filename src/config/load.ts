@@ -278,6 +278,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
     craReporting: {
       enabled: typeof craReporting.enabled === 'boolean' ? craReporting.enabled : DEFAULT_CONFIG.craReporting.enabled,
       endpoint: typeof craReporting.endpoint === 'string' ? craReporting.endpoint : DEFAULT_CONFIG.craReporting.endpoint,
+      assessmentId: typeof craReporting.assessmentId === 'string' ? craReporting.assessmentId : DEFAULT_CONFIG.craReporting.assessmentId,
       tokenEnv: typeof craReporting.tokenEnv === 'string' ? craReporting.tokenEnv : DEFAULT_CONFIG.craReporting.tokenEnv,
       timeoutMs: typeof craReporting.timeoutMs === 'number' && craReporting.timeoutMs >= 0 ? craReporting.timeoutMs : DEFAULT_CONFIG.craReporting.timeoutMs,
       maxAttempts: typeof craReporting.maxAttempts === 'number' && Number.isInteger(craReporting.maxAttempts) && craReporting.maxAttempts > 0 ? craReporting.maxAttempts : DEFAULT_CONFIG.craReporting.maxAttempts,
@@ -359,6 +360,7 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
   if (env.SENTRYCODE_COMPLIANCE_ENDPOINT !== undefined) next.compliance.endpoint = env.SENTRYCODE_COMPLIANCE_ENDPOINT;
   if (env.SENTRYCODE_DISABLE_COMPLIANCE_PUBLISH === 'true') next.compliance.enabled = false;
   if (env.SENTRYCODE_CRA_ENDPOINT !== undefined) next.craReporting.endpoint = env.SENTRYCODE_CRA_ENDPOINT;
+  if (env.SENTRYCODE_CRA_ASSESSMENT_ID !== undefined) next.craReporting.assessmentId = env.SENTRYCODE_CRA_ASSESSMENT_ID;
   if (env.SENTRYCODE_DISABLE_CRA_REPORTING === 'true') next.craReporting.enabled = false;
   if (env.SENTRYCODE_OFFLINE === 'true') next.offline.enabled = true;
   return next;
