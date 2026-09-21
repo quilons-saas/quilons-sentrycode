@@ -483,6 +483,53 @@ async function main(): Promise<number> {
       return EXIT_CODES.PASS;
     }
 
+    // Compliance runtime/read operations must not require Git. Preserve the
+    // repository-root behavior when Git/repository context is available, but fall
+    // back to the packaged application root used by production containers, which
+    // intentionally carry neither a .git directory nor a Git executable.
+    // Repository-bound publication remains below resolveRepository().
+    if (options.command === 'compliance-manifest' || options.command === 'compliance-health' || options.command === 'compliance-ready' || options.command === 'compliance-runs' || options.command === 'compliance-run' || options.command === 'compliance-serve') {
+      let complianceRoot = standaloneRoot;
+      try { complianceRoot = (await resolveRepository(options.path)).root; } catch { /* packaged runtime: no Git repository required */ }
+      let config;
+      try { config = await loadConfig(complianceRoot, options.config); }
+      catch (error) { console.error(`Configuration error: ${(error as Error).message}`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+
+      const configPath = options.config ?? '.sentrycode/config.json';
+      if (config.integrity.requireSignedConfig) {
+        if (!config.integrity.publicKeyFile) { console.error('Configuration error: integrity.publicKeyFile is required when signed configuration is enforced'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+        const ok = await verifyFile(complianceRoot, configPath, config.integrity.configSignatureFile, config.integrity.publicKeyFile);
+        if (!ok) { console.error('Configuration error: SentryCode configuration signature verification failed'); return EXIT_CODES.CONFIGURATION_FAILURE; }
+      }
+
+      const service = new SentryCodeComplianceService(complianceRoot, config.compliance.storeDirectory, { ...(config.integrity.evidenceSigningPrivateKeyFile ? { privateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {}), ...(config.integrity.evidenceSigningPublicKeyFile ? { publicKeyFile: config.integrity.evidenceSigningPublicKeyFile } : {}) });
+      if (options.command === 'compliance-serve') {
+        const token = process.env[config.compliance.apiTokenEnv] ?? ''; const hmacSecret = process.env[config.compliance.hmacSecretEnv] ?? '';
+        if (config.compliance.authMode === 'hmac' && !hmacSecret) { console.error(`Configuration error: ${config.compliance.hmacSecretEnv} is required for HMAC Compliance API mode`); return EXIT_CODES.CONFIGURATION_FAILURE; }
+        const running = await startComplianceServer(service, { host: config.compliance.listenHost, port: config.compliance.listenPort, ...(config.compliance.authMode === 'hmac' ? { hmac: { secret: hmacSecret, issuer: config.compliance.tokenIssuer, audience: config.compliance.tokenAudience } } : token ? { token } : {}) });
+        process.stdout.write(`SentryCode Compliance API listening on ${running.host}:${running.port}\n`);
+        await new Promise<void>(() => {});
+        return EXIT_CODES.PASS;
+      }
+      let value: unknown;
+      if (options.command === 'compliance-manifest') value = await service.manifest();
+      else if (options.command === 'compliance-health') value = service.health();
+      else if (options.command === 'compliance-ready') value = await service.readiness();
+      else {
+        const identity = resolveComplianceIdentity(config, options);
+        if (options.command === 'compliance-runs') value = await service.listRuns(identity);
+        else value = await service.getRun(identity, options.runId!);
+      }
+      if (options.format === 'json') process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+      else if (options.command === 'compliance-health') process.stdout.write('PASS SentryCode Compliance plugin health\n');
+      else if (options.command === 'compliance-ready') {
+        const readiness = value as Awaited<ReturnType<SentryCodeComplianceService['readiness']>>;
+        process.stdout.write(`${readiness.ready ? 'PASS' : 'FAIL'} SentryCode Compliance plugin readiness\n${readiness.checks.map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.id}: ${item.detail}`).join('\n')}\n`);
+        if (!readiness.ready) return EXIT_CODES.RUNTIME_FAILURE;
+      } else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+      return EXIT_CODES.PASS;
+    }
+
     const repository = await resolveRepository(options.path);
 
     if (options.command === 'dependencies-diff') {
@@ -567,35 +614,6 @@ async function main(): Promise<number> {
       const evidence = await applyComplianceRetention(repository.root, config.compliance.storeDirectory, config.operations.retentionDays);
       await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'retention.applied', { backupEntriesRemoved: backups.length, evidenceEntriesRemoved: evidence.length }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
       process.stdout.write(`${JSON.stringify({ backupsRemoved: backups, evidenceEntriesRemoved: evidence }, null, 2)}\n`); return EXIT_CODES.PASS;
-    }
-
-    if (options.command === 'compliance-manifest' || options.command === 'compliance-health' || options.command === 'compliance-ready' || options.command === 'compliance-runs' || options.command === 'compliance-run' || options.command === 'compliance-serve') {
-      const service = new SentryCodeComplianceService(repository.root, config.compliance.storeDirectory, { ...(config.integrity.evidenceSigningPrivateKeyFile ? { privateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {}), ...(config.integrity.evidenceSigningPublicKeyFile ? { publicKeyFile: config.integrity.evidenceSigningPublicKeyFile } : {}) });
-      if (options.command === 'compliance-serve') {
-        const token = process.env[config.compliance.apiTokenEnv] ?? ''; const hmacSecret = process.env[config.compliance.hmacSecretEnv] ?? '';
-        if (config.compliance.authMode === 'hmac' && !hmacSecret) { console.error(`Configuration error: ${config.compliance.hmacSecretEnv} is required for HMAC Compliance API mode`); return EXIT_CODES.CONFIGURATION_FAILURE; }
-        const running = await startComplianceServer(service, { host: config.compliance.listenHost, port: config.compliance.listenPort, ...(config.compliance.authMode === 'hmac' ? { hmac: { secret: hmacSecret, issuer: config.compliance.tokenIssuer, audience: config.compliance.tokenAudience } } : token ? { token } : {}) });
-        process.stdout.write(`SentryCode Compliance API listening on ${running.host}:${running.port}\n`);
-        await new Promise<void>(() => {});
-        return EXIT_CODES.PASS;
-      }
-      let value: unknown;
-      if (options.command === 'compliance-manifest') value = await service.manifest();
-      else if (options.command === 'compliance-health') value = service.health();
-      else if (options.command === 'compliance-ready') value = await service.readiness();
-      else {
-        const identity = resolveComplianceIdentity(config, options);
-        if (options.command === 'compliance-runs') value = await service.listRuns(identity);
-        else value = await service.getRun(identity, options.runId!);
-      }
-      if (options.format === 'json') process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-      else if (options.command === 'compliance-health') process.stdout.write('PASS SentryCode Compliance plugin health\n');
-      else if (options.command === 'compliance-ready') {
-        const readiness = value as Awaited<ReturnType<SentryCodeComplianceService['readiness']>>;
-        process.stdout.write(`${readiness.ready ? 'PASS' : 'FAIL'} SentryCode Compliance plugin readiness\n${readiness.checks.map((item) => `${item.ok ? 'PASS' : 'FAIL'} ${item.id}: ${item.detail}`).join('\n')}\n`);
-        if (!readiness.ready) return EXIT_CODES.RUNTIME_FAILURE;
-      } else process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-      return EXIT_CODES.PASS;
     }
 
     if (options.command === 'services') {

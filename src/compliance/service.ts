@@ -1,4 +1,4 @@
-import { access, constants } from 'node:fs/promises';
+import { access, constants, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ComplianceHealth, ComplianceIdentity, ComplianceReadiness, PluginManifest } from './contracts.js';
 import { COMPLIANCE_API_VERSION, SENTRYCODE_PLUGIN_ID } from './contracts.js';
@@ -18,7 +18,12 @@ export class SentryCodeComplianceService {
     const checks: ComplianceReadiness['checks'] = [];
     try { await access(resolve(this.repositoryRoot, 'package.json'), constants.R_OK); checks.push({ id: 'package', ok: true, detail: 'package.json readable' }); }
     catch { checks.push({ id: 'package', ok: false, detail: 'package.json not readable' }); }
-    try { await access(this.repositoryRoot, constants.W_OK); checks.push({ id: 'store', ok: true, detail: 'repository root writable for configured local evidence store' }); }
+    const storeRoot = resolve(this.repositoryRoot, this.storeDirectory);
+    try {
+      await mkdir(storeRoot, { recursive: true });
+      await access(storeRoot, constants.W_OK);
+      checks.push({ id: 'store', ok: true, detail: `configured local evidence store writable: ${this.storeDirectory}` });
+    }
     catch (error) { checks.push({ id: 'store', ok: false, detail: `local evidence store unavailable: ${(error as Error).message}` }); }
     return { ...this.health(), ready: checks.every((item) => item.ok), checks };
   }
