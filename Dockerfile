@@ -14,6 +14,7 @@ RUN npm run build && npm prune --omit=dev
 FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app
+RUN apk add --no-cache git
 RUN addgroup -S sentrycode && adduser -S -G sentrycode sentrycode
 COPY --from=build --chown=sentrycode:sentrycode /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=sentrycode:sentrycode /app/node_modules ./node_modules
