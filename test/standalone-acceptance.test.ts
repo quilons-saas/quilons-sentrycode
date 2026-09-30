@@ -36,3 +36,16 @@ test('PostgreSQL application pool fails promptly when the database is unreachabl
   const source=await readFile(resolve('src/application/postgres.ts'),'utf8');
   assert.match(source,/connectionTimeoutMillis: 5_000/);
 });
+
+
+test('multi-consumer PostgreSQL acceptance covers migration, failure isolation, idempotency, and restart retry',async()=>{
+  const script=await readFile(resolve('scripts/acceptance/multi-consumer-postgres.mjs'),'utf8');
+  assert.match(script,/store\.migrate\(\)/);
+  assert.match(script,/schema!==4/);
+  assert.match(script,/legacy-report/);
+  assert.match(script,/consumerId:'cra'/);
+  assert.match(script,/consumerId:'cyber'/);
+  assert.match(script,/docker\(\['restart',name\]\)/);
+  assert.match(script,/idempotency collision/);
+  assert.match(script,/SENTRYCODE MULTI-CONSUMER POSTGRES ACCEPTANCE: PASS/);
+});

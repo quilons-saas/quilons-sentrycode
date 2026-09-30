@@ -236,6 +236,26 @@ export interface PolicyAuditRecord {
   reason?: string;
 }
 
+export interface ConsumerScanProfile {
+  requiredScanners: string[];
+  evidenceTypes: string[];
+  severities: Severity[];
+  findingTypes: string[];
+}
+
+export interface ConsumerConfig {
+  consumerId: string;
+  adapter: string;
+  enabled: boolean;
+  endpoint: string;
+  tokenEnv: string;
+  timeoutMs: number;
+  maxAttempts: number;
+  retryDelayMs: number;
+  scanProfile: ConsumerScanProfile;
+  context: Record<string, string>;
+}
+
 export interface SentryCodeConfig {
   schemaVersion: 1;
   scan: {
@@ -400,6 +420,8 @@ export interface SentryCodeConfig {
     tokenIssuer: string;
     tokenAudience: string;
   };
+  consumers: ConsumerConfig[];
+  /** @deprecated Use consumers with the CRA adapter. Retained until generic delivery migration is proven equivalent. */
   craReporting: {
     enabled: boolean;
     endpoint: string;

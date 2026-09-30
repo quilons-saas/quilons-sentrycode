@@ -49,8 +49,11 @@ import { startWebServer } from '../web/server.js';
 import { createApplicationStateStore } from '../application/factory.js';
 import { openBrowser } from '../web/open-browser.js';
 import { GerritProvider, gerritAuthFromEnv, gerritReviewMessage } from '../git/gerrit-provider.js';
-import { buildCraFindingReports } from '../compliance/cra-reporting.js';
-import { deliverPendingCraFindingReports, enqueueCraFindingReports } from '../compliance/cra-delivery.js';
+import { buildCraFindingReports, type CraFindingReport } from '../compliance/cra-reporting.js';
+import { deliverPendingConsumerDeliveries, enqueueConsumerDeliveries } from '../consumers/delivery.js';
+import { buildConsumerDeliveryMessages } from '../consumers/messages.js';
+import { getConsumerAdapter } from '../consumers/registry.js';
+import { CRA_CONSUMER_ADAPTER_CONTRACT_VERSION } from '../consumers/cra-adapter.js';
 
 interface CommonOptions { path: string; config?: string; output?: string; service?: string; base?: string; head?: string; full?: boolean; ci?: boolean; tenant?: string; project?: string; runId?: string; host?: string; port?: number; noOpen?: boolean; }
 interface ScanOptions extends CommonOptions { command: 'scan' | 'check'; format: 'console' | 'json' | 'sarif'; }
@@ -375,24 +378,38 @@ async function reportCraFindings(root: string, config: SentryCodeConfig, options
     const reports = buildCraFindingReports({ identity, report, productVersion, materiality: { severities: config.craReporting.severities, findingTypes: config.craReporting.findingTypes } });
     store = await createApplicationStateStore();
     const status = await store.status();
-    if (!status.connected || (status.schemaVersion ?? 0) < 2) {
-      throw new Error(!status.connected ? status.detail : `PostgreSQL schema ${status.schemaVersion ?? 0} does not include CRA delivery state`);
+    if (!status.connected || (status.schemaVersion ?? 0) < 4) {
+      throw new Error(!status.connected ? status.detail : `PostgreSQL schema ${status.schemaVersion ?? 0} does not include versioned generic consumer delivery state`);
     }
-    const queued = await enqueueCraFindingReports(store, reports);
+    const queued = await enqueueConsumerDeliveries(store, reports.map((craReport) => ({
+      consumerId: 'cra',
+      adapterId: 'cra',
+      adapterContractVersion: CRA_CONSUMER_ADAPTER_CONTRACT_VERSION,
+      messageId: craReport.reportId,
+      tenant: craReport.tenant,
+      project: craReport.project,
+      findingId: craReport.finding.id,
+      runId: craReport.correlation.runId,
+      payload: craReport as unknown as Record<string, unknown>
+    })));
     for (const item of queued.filter((value) => value.created)) {
       await appendAuditEvent(root, config.integrity.auditLogFile, 'cra.report.queued', {
-        reportId: item.record.reportId, findingId: item.record.findingId, runId: item.record.runId, tenant: item.record.tenant, project: item.record.project
+        reportId: item.record.messageId, consumerId: item.record.consumerId, adapterId: item.record.adapterId, adapterContractVersion: item.record.adapterContractVersion,
+        findingId: item.record.findingId, runId: item.record.runId, tenant: item.record.tenant, project: item.record.project
       }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
     }
     const token = process.env[config.craReporting.tokenEnv] ?? '';
-    const result = await deliverPendingCraFindingReports({
+    const craPublisher = new HttpCraFindingPublisher(config.craReporting.endpoint, token, config.craReporting.timeoutMs, config.craReporting.assessmentId);
+    const result = await deliverPendingConsumerDeliveries({
       store,
-      publisher: new HttpCraFindingPublisher(config.craReporting.endpoint, token, config.craReporting.timeoutMs, config.craReporting.assessmentId),
+      publisher: { publish: (payload) => craPublisher.publish(payload as unknown as CraFindingReport) },
+      consumerId: 'cra',
       tenant: identity.tenant,
       project: identity.project,
       options: { maxAttempts: config.craReporting.maxAttempts, retryDelayMs: config.craReporting.retryDelayMs },
       root,
       auditLogFile: config.integrity.auditLogFile,
+      auditEventPrefix: 'cra.report',
       ...(config.integrity.evidenceSigningPrivateKeyFile ? { auditSigningPrivateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {})
     });
     if (result.failed > 0) console.error(`CRA reporting delivery pending: ${result.failed} report(s) failed and remain eligible for governed retry`);
@@ -405,6 +422,70 @@ async function reportCraFindings(root: string, config: SentryCodeConfig, options
       await appendAuditEvent(root, config.integrity.auditLogFile, 'cra.report.delivery_unavailable', { tenant: identity.tenant, project: identity.project, reason }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
     } catch {}
     return { queued: 0, attempted: 0, delivered: 0, failed: 0 };
+  } finally {
+    if (store) await store.close().catch(() => undefined);
+  }
+}
+
+
+async function reportConfiguredConsumers(root: string, config: SentryCodeConfig, options: CommonOptions, report: ScanReport, productVersion: string) {
+  const consumers = config.consumers.filter((consumer) => consumer.enabled);
+  if (consumers.length === 0) return { consumers: 0, queued: 0, attempted: 0, delivered: 0, failed: 0 };
+
+  const identity = resolveComplianceIdentity(config, options);
+  let store: Awaited<ReturnType<typeof createApplicationStateStore>> | null = null;
+  let queuedCount = 0;
+  let attempted = 0;
+  let delivered = 0;
+  let failed = 0;
+  try {
+    store = await createApplicationStateStore();
+    const status = await store.status();
+    if (!status.connected || (status.schemaVersion ?? 0) < 4) {
+      throw new Error(!status.connected ? status.detail : `PostgreSQL schema ${status.schemaVersion ?? 0} does not include versioned generic consumer delivery state`);
+    }
+
+    for (const consumer of consumers) {
+      try {
+        const adapter = getConsumerAdapter(consumer.adapter);
+        if (!adapter) throw new Error(`Consumer adapter is not installed: ${consumer.adapter}`);
+        if (!consumer.endpoint.trim()) throw new Error(`Consumer ${consumer.consumerId} endpoint is required`);
+        const messages = buildConsumerDeliveryMessages({ consumer, identity, report, productVersion });
+        const queued = await enqueueConsumerDeliveries(store, messages);
+        queuedCount += queued.filter((value) => value.created).length;
+        for (const item of queued.filter((value) => value.created)) {
+          await appendAuditEvent(root, config.integrity.auditLogFile, 'consumer.delivery.queued', {
+            consumerId: item.record.consumerId, adapterId: item.record.adapterId, adapterContractVersion: item.record.adapterContractVersion, messageId: item.record.messageId,
+            findingId: item.record.findingId, runId: item.record.runId, tenant: item.record.tenant, project: item.record.project
+          }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+        }
+        const token = consumer.tokenEnv ? (process.env[consumer.tokenEnv] ?? '') : '';
+        const result = await deliverPendingConsumerDeliveries({
+          store,
+          publisher: adapter.createPublisher(consumer, token),
+          consumerId: consumer.consumerId,
+          tenant: identity.tenant,
+          project: identity.project,
+          options: { maxAttempts: consumer.maxAttempts, retryDelayMs: consumer.retryDelayMs },
+          root,
+          auditLogFile: config.integrity.auditLogFile,
+          auditEventPrefix: `consumer.${consumer.consumerId}`,
+          ...(config.integrity.evidenceSigningPrivateKeyFile ? { auditSigningPrivateKeyFile: config.integrity.evidenceSigningPrivateKeyFile } : {})
+        });
+        attempted += result.attempted;
+        delivered += result.delivered;
+        failed += result.failed;
+      } catch (error) {
+        const reason = (error as Error).message;
+        console.error(`Consumer ${consumer.consumerId} delivery unavailable: ${reason}`);
+        try {
+          await appendAuditEvent(root, config.integrity.auditLogFile, 'consumer.delivery.unavailable', {
+            consumerId: consumer.consumerId, adapterId: consumer.adapter, tenant: identity.tenant, project: identity.project, reason
+          }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+        } catch {}
+      }
+    }
+    return { consumers: consumers.length, queued: queuedCount, attempted, delivered, failed };
   } finally {
     if (store) await store.close().catch(() => undefined);
   }
@@ -703,21 +784,26 @@ async function main(): Promise<number> {
     });
 
     let compliancePublication: Awaited<ReturnType<typeof publishCompliance>> | null = null;
+    const hasExplicitConsumers = config.consumers.some((consumer) => consumer.enabled);
     if (options.command === 'compliance-publish' || config.compliance.enabled) {
       compliancePublication = await publishCompliance(repository.root, config, options, report, true);
-    } else if (config.craReporting.enabled) {
+    } else if (config.craReporting.enabled || hasExplicitConsumers) {
       try {
         compliancePublication = await publishCompliance(repository.root, config, options, report, false);
       } catch (error) {
         const reason = (error as Error).message;
-        console.error(`CRA reporting unavailable: ${reason}`);
+        console.error(`Consumer evidence publication unavailable: ${reason}`);
         try {
-          await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'cra.report.delivery_unavailable', { tenant: config.compliance.tenant, project: config.compliance.project, reason }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
+          await appendAuditEvent(repository.root, config.integrity.auditLogFile, 'consumer.evidence.publication_unavailable', { tenant: config.compliance.tenant, project: config.compliance.project, reason }, undefined, config.integrity.evidenceSigningPrivateKeyFile || undefined);
         } catch {}
       }
     }
-    if (config.craReporting.enabled && compliancePublication) {
+    const hasExplicitCra = config.consumers.some((consumer) => consumer.enabled && consumer.adapter === 'cra');
+    if (config.craReporting.enabled && !hasExplicitCra && compliancePublication) {
       await reportCraFindings(repository.root, config, options, report, compliancePublication.evidence.producer.version);
+    }
+    if (hasExplicitConsumers && compliancePublication) {
+      await reportConfiguredConsumers(repository.root, config, options, report, compliancePublication.evidence.producer.version);
     }
     if (options.command === 'compliance-publish' && compliancePublication) {
       const rendered = options.format === 'json'

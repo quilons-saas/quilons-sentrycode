@@ -51,6 +51,7 @@ test('CRA reporting contract reuses governed identity and evidence references wi
   assert.equal(built.evidenceReference.apiVersion, COMPLIANCE_API_VERSION);
   assert.deepEqual(built.evidenceReference.evidenceIds, ['evidence-1']);
   assert.equal(built.evidenceReference.resourcePath, '/v1/runs/run-123/evidence');
+  assert.equal('evidenceTypes' in built.evidenceReference, false);
   assert.equal(built.sourceRevision.changeNumber, '42');
   assert.equal(built.sourceRevision.patchsetNumber, '3');
   assert.equal(built.timestamps.detectedAt, '2026-08-31T01:00:03.000Z');

@@ -33,7 +33,8 @@ function changesLockedField(
 
 export function resolvePolicy(
   config: SentryCodeConfig,
-  documents: Array<{ path: string; document: PolicyDocument }>
+  documents: Array<{ path: string; document: PolicyDocument }>,
+  options: { requiredScannersFloor?: string[] } = {}
 ): EffectivePolicy {
   const effective: EffectivePolicy = {
     sourceDocuments: [],
@@ -70,6 +71,11 @@ export function resolvePolicy(
       path
     });
   }
+
+  for (const scanner of options.requiredScannersFloor ?? []) {
+    if (!effective.requiredScanners.includes(scanner)) effective.requiredScanners.push(scanner);
+  }
+  effective.requiredScanners.sort();
 
   effective.fingerprint = fingerprint({
     sourceDocuments: effective.sourceDocuments,

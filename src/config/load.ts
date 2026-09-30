@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { DEFAULT_CONFIG } from './defaults.js';
-import type { ScannerFailureMode, SentryCodeConfig, Severity } from '../core/types.js';
+import type { ConsumerConfig, ScannerFailureMode, SentryCodeConfig, Severity } from '../core/types.js';
 
 const VALID_SEVERITIES = new Set<Severity>(['info', 'low', 'medium', 'high', 'critical']);
 const VALID_FAILURE_MODES = new Set<ScannerFailureMode>(['fail', 'warn', 'ignore']);
@@ -56,6 +56,46 @@ function optionalString(value: unknown, label: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} must be a non-empty string`);
   return value;
+}
+
+function consumerConfigs(value: unknown): ConsumerConfig[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('consumers must be an array');
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const label = `consumers[${index}]`;
+    const raw = asObject(item, label);
+    const consumerId = optionalString(raw.consumerId, `${label}.consumerId`);
+    const adapter = optionalString(raw.adapter, `${label}.adapter`);
+    if (!consumerId) throw new Error(`${label}.consumerId is required`);
+    if (!adapter) throw new Error(`${label}.adapter is required`);
+    if (seen.has(consumerId)) throw new Error(`Duplicate consumerId: ${consumerId}`);
+    seen.add(consumerId);
+
+    const scanProfile = raw.scanProfile === undefined ? {} : asObject(raw.scanProfile, `${label}.scanProfile`);
+    const severityValues = stringArray(scanProfile.severities, [], `${label}.scanProfile.severities`);
+    if (severityValues.some((severity) => !VALID_SEVERITIES.has(severity as Severity))) {
+      throw new Error(`${label}.scanProfile.severities must contain valid severities`);
+    }
+
+    return {
+      consumerId,
+      adapter,
+      enabled: typeof raw.enabled === 'boolean' ? raw.enabled : true,
+      endpoint: typeof raw.endpoint === 'string' ? raw.endpoint : '',
+      tokenEnv: typeof raw.tokenEnv === 'string' ? raw.tokenEnv : '',
+      timeoutMs: typeof raw.timeoutMs === 'number' && raw.timeoutMs >= 0 ? raw.timeoutMs : 15000,
+      maxAttempts: typeof raw.maxAttempts === 'number' && Number.isInteger(raw.maxAttempts) && raw.maxAttempts > 0 ? raw.maxAttempts : 5,
+      retryDelayMs: typeof raw.retryDelayMs === 'number' && raw.retryDelayMs >= 0 ? raw.retryDelayMs : 30000,
+      scanProfile: {
+        requiredScanners: stringArray(scanProfile.requiredScanners, [], `${label}.scanProfile.requiredScanners`),
+        evidenceTypes: stringArray(scanProfile.evidenceTypes, [], `${label}.scanProfile.evidenceTypes`),
+        severities: severityValues as Severity[],
+        findingTypes: stringArray(scanProfile.findingTypes, [], `${label}.scanProfile.findingTypes`)
+      },
+      context: stringRecord(raw.context, {}, `${label}.context`)
+    };
+  });
 }
 
 function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
@@ -275,6 +315,7 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       tokenIssuer: typeof compliance.tokenIssuer === 'string' ? compliance.tokenIssuer : DEFAULT_CONFIG.compliance.tokenIssuer,
       tokenAudience: typeof compliance.tokenAudience === 'string' ? compliance.tokenAudience : DEFAULT_CONFIG.compliance.tokenAudience
     },
+    consumers: consumerConfigs(raw.consumers),
     craReporting: {
       enabled: typeof craReporting.enabled === 'boolean' ? craReporting.enabled : DEFAULT_CONFIG.craReporting.enabled,
       endpoint: typeof craReporting.endpoint === 'string' ? craReporting.endpoint : DEFAULT_CONFIG.craReporting.endpoint,

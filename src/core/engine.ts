@@ -8,6 +8,7 @@ import { loadPolicyDocuments } from '../policy/documents.js';
 import { resolvePolicy } from '../policy/resolve.js';
 import { evaluateOpa } from '../policy/opa.js';
 import { stableId } from '../utils/hash.js';
+import { consumerRequiredScanners, describeConsumerAdapters } from '../consumers/registry.js';
 
 const RANK = { PASS: 0, WARN: 1, FAIL: 2 } as const;
 
@@ -73,7 +74,19 @@ export async function runScan(args: {
     ...((args.service ?? args.config.policy.context.service) ? { service: args.service ?? args.config.policy.context.service } : {})
   };
   const documents = await loadPolicyDocuments(args.repository.root, args.config.policy.directory, policyContext, now());
-  const effectivePolicy = resolvePolicy(args.config, documents);
+  const consumerScanners = consumerRequiredScanners(args.config);
+  const consumerPlan = describeConsumerAdapters(args.config)
+    .filter((status) => status.consumer.enabled)
+    .map((status) => ({
+      consumerId: status.consumer.consumerId,
+      adapter: status.consumer.adapter,
+      adapterAvailable: status.available,
+      adapterContractVersion: status.adapterContractVersion ?? null,
+      requiredScanners: [...status.requirements.requiredScanners].sort(),
+      evidenceTypes: [...status.requirements.evidenceTypes].sort()
+    }))
+    .sort((a, b) => a.consumerId.localeCompare(b.consumerId));
+  const effectivePolicy = resolvePolicy(args.config, documents, { requiredScannersFloor: consumerScanners });
   const waivers = await loadWaivers(args.repository.root, args.config.waivers.file);
   const policy = evaluatePolicy(args.config, scannerResults, waivers, now(), effectivePolicy, policyContext);
 
@@ -105,7 +118,9 @@ export async function runScan(args: {
       policyFingerprint: effectivePolicy.fingerprint,
       policyDocumentCount: effectivePolicy.sourceDocuments.length,
       waivedCount: policy.waivedCount,
-      opaEnabled: args.config.policy.opa.enabled
+      opaEnabled: args.config.policy.opa.enabled,
+      consumerRequiredScanners: consumerScanners.join(','),
+      consumerPlan: JSON.stringify(consumerPlan)
     }
   };
 

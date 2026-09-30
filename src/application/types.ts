@@ -27,6 +27,15 @@ export interface PrincipalRecord { id: string; subject: string; displayName: str
 export interface ApplicationAuditRecord { id: string; at: string; actor: string; action: string; entityType: string; entityId: string; detail: Record<string, unknown>; }
 export interface ApplicationStateStatus { configured: boolean; connected: boolean; schemaVersion: number | null; detail: string; }
 
+export type ConsumerDeliveryStatus = 'pending' | 'delivered' | 'failed';
+export interface ConsumerDeliveryRecord {
+  consumerId: string; adapterId: string; adapterContractVersion: string; messageId: string; tenant: string; project: string; findingId: string; runId: string;
+  payload: Record<string, unknown>; status: ConsumerDeliveryStatus; attemptCount: number; responseStatus: number | null;
+  lastAttemptAt: string | null; nextAttemptAt: string | null; lastError: string | null; deliveredAt: string | null;
+  createdAt: string; updatedAt: string;
+}
+export interface ConsumerDeliveryEnqueueResult { record: ConsumerDeliveryRecord; created: boolean; }
+
 export type CraReportDeliveryStatus = 'pending' | 'delivered' | 'failed';
 export interface CraReportDeliveryRecord {
   reportId: string; tenant: string; project: string; findingId: string; runId: string; payload: Record<string, unknown>;
