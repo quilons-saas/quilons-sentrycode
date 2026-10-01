@@ -91,38 +91,56 @@ export async function deliverPendingConsumerDeliveries(args: {
 }): Promise<{ attempted: number; delivered: number; failed: number }> {
   const consumerId = required(args.consumerId, 'consumerId');
   const now = args.now ?? new Date();
-  const pending = await args.store.listPendingConsumerDeliveries(
-    consumerId,
-    args.tenant,
-    args.project,
-    args.options.maxAttempts,
-    now.toISOString(),
-    args.options.batchSize ?? 100
-  );
+  const batchSize = args.options.batchSize ?? 100;
+  if (!Number.isInteger(batchSize) || batchSize <= 0) throw new Error('consumer delivery batchSize must be a positive integer');
+
+  let attempted = 0;
   let delivered = 0;
   let failed = 0;
   const auditPrefix = args.auditEventPrefix?.trim() || 'consumer.delivery';
-  for (const record of pending) {
-    try {
-      const result = await args.publisher.publish(record.payload);
-      await args.store.recordConsumerDeliveryAttempt(record.consumerId, record.messageId, { delivered: true, responseStatus: result.statusCode });
-      delivered += 1;
-      await appendAuditEvent(args.root, args.auditLogFile, `${auditPrefix}.delivered`, {
-        consumerId: record.consumerId, adapterId: record.adapterId, adapterContractVersion: record.adapterContractVersion, messageId: record.messageId,
-        findingId: record.findingId, runId: record.runId, tenant: record.tenant, project: record.project,
-        responseStatus: result.statusCode
-      }, undefined, args.auditSigningPrivateKeyFile);
-    } catch (error) {
-      const message = (error as Error).message;
-      const nextAttemptAt = new Date(now.getTime() + args.options.retryDelayMs).toISOString();
-      await args.store.recordConsumerDeliveryAttempt(record.consumerId, record.messageId, { delivered: false, error: message, nextAttemptAt });
-      failed += 1;
-      await appendAuditEvent(args.root, args.auditLogFile, `${auditPrefix}.delivery_failed`, {
-        consumerId: record.consumerId, adapterId: record.adapterId, adapterContractVersion: record.adapterContractVersion, messageId: record.messageId,
-        findingId: record.findingId, runId: record.runId, tenant: record.tenant, project: record.project,
-        error: message
-      }, undefined, args.auditSigningPrivateKeyFile);
+
+  while (true) {
+    const pending = await args.store.listPendingConsumerDeliveries(
+      consumerId,
+      args.tenant,
+      args.project,
+      args.options.maxAttempts,
+      now.toISOString(),
+      batchSize
+    );
+    if (pending.length === 0) break;
+
+    let batchFailed = 0;
+    attempted += pending.length;
+    for (const record of pending) {
+      try {
+        const result = await args.publisher.publish(record.payload);
+        await args.store.recordConsumerDeliveryAttempt(record.consumerId, record.messageId, { delivered: true, responseStatus: result.statusCode });
+        delivered += 1;
+        await appendAuditEvent(args.root, args.auditLogFile, `${auditPrefix}.delivered`, {
+          consumerId: record.consumerId, adapterId: record.adapterId, adapterContractVersion: record.adapterContractVersion, messageId: record.messageId,
+          findingId: record.findingId, runId: record.runId, tenant: record.tenant, project: record.project,
+          responseStatus: result.statusCode
+        }, undefined, args.auditSigningPrivateKeyFile);
+      } catch (error) {
+        const message = (error as Error).message;
+        const nextAttemptAt = new Date(now.getTime() + args.options.retryDelayMs).toISOString();
+        await args.store.recordConsumerDeliveryAttempt(record.consumerId, record.messageId, { delivered: false, error: message, nextAttemptAt });
+        failed += 1;
+        batchFailed += 1;
+        await appendAuditEvent(args.root, args.auditLogFile, `${auditPrefix}.delivery_failed`, {
+          consumerId: record.consumerId, adapterId: record.adapterId, adapterContractVersion: record.adapterContractVersion, messageId: record.messageId,
+          findingId: record.findingId, runId: record.runId, tenant: record.tenant, project: record.project,
+          error: message
+        }, undefined, args.auditSigningPrivateKeyFile);
+      }
     }
+
+    // A healthy consumer drains every page in this invocation. If any delivery in
+    // the current page fails, stop this consumer's drain cycle and leave the
+    // remaining durable queue untouched for a later governed retry.
+    if (batchFailed > 0 || pending.length < batchSize) break;
   }
-  return { attempted: pending.length, delivered, failed };
+
+  return { attempted, delivered, failed };
 }

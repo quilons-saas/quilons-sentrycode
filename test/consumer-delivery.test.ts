@@ -71,3 +71,26 @@ test('generic delivery fails closed when an idempotency key is reused for differ
   const collision={...message('cra','finding-4'),tenant:'other-tenant'};
   await assert.rejects(()=>enqueueConsumerDeliveries(store,[collision]),/idempotency collision/);
 });
+
+test('healthy consumer delivery drains more than one storage batch in one governed invocation',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'consumer-multipage-')); const store=new MemoryConsumerDeliveryStore();
+  const messages=Array.from({length:205},(_,index)=>message('cra',`finding-${index+1}`));
+  await enqueueConsumerDeliveries(store,messages);
+  const publisher=new Publisher('CRA');
+  const result=await deliverPendingConsumerDeliveries({store,publisher,consumerId:'cra',tenant:'acme',project:'payments',options:{maxAttempts:3,retryDelayMs:1000,batchSize:100},root,auditLogFile:'.sentrycode/audit/events.jsonl',now:new Date('2026-09-30T10:00:01.000Z')});
+  assert.deepEqual(result,{attempted:205,delivered:205,failed:0});
+  assert.equal(publisher.calls.length,205);
+  assert.equal([...store.values.values()].filter(value=>value.status==='delivered').length,205);
+});
+
+test('consumer delivery stops the current drain cycle after a failed page without immediate self-retry',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'consumer-failed-page-')); const store=new MemoryConsumerDeliveryStore();
+  const messages=Array.from({length:101},(_,index)=>message('cyber',`finding-${index+1}`));
+  await enqueueConsumerDeliveries(store,messages);
+  const publisher=new Publisher('Cyber',true);
+  const result=await deliverPendingConsumerDeliveries({store,publisher,consumerId:'cyber',tenant:'acme',project:'payments',options:{maxAttempts:3,retryDelayMs:0,batchSize:100},root,auditLogFile:'.sentrycode/audit/events.jsonl',now:new Date('2026-09-30T10:00:01.000Z')});
+  assert.deepEqual(result,{attempted:100,delivered:0,failed:100});
+  assert.equal(publisher.calls.length,100);
+  assert.equal(store.values.get('cyber|cyber-finding-1')!.attemptCount,1);
+  assert.equal(store.values.get('cyber|cyber-finding-101')!.attemptCount,0);
+});
