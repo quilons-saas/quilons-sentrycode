@@ -56,6 +56,13 @@ try{
   if(!legacy||legacy.adapterContractVersion!=='1.0.0'||legacy.attemptCount!==1)fail(`legacy CRA migration mismatch: ${JSON.stringify(legacy)}`);
   pass('schema 2 CRA delivery history migrated into versioned generic delivery state');
 
+  const repeatedSchema=await store.migrate();
+  if(repeatedSchema!==4)fail(`expected repeated migration to remain schema 4, received ${repeatedSchema}`);
+  const migratedAgain=await store.listPendingConsumerDeliveries('cra','legacy-tenant','legacy-project',3,new Date().toISOString(),100);
+  const legacyAgain=migratedAgain.find((item)=>item.messageId==='legacy-report');
+  if(!legacyAgain||legacyAgain.adapterContractVersion!=='1.0.0'||legacyAgain.attemptCount!==1)fail(`schema 4 restart migration replay changed legacy CRA delivery: ${JSON.stringify(legacyAgain)}`);
+  pass('schema 4 startup migration is idempotent and preserves versioned CRA delivery history');
+
   const queued=await enqueueConsumerDeliveries(store,[craMessage,cyberMessage]);
   if(queued.filter((item)=>item.created).length!==2)fail('expected two independent consumer deliveries');
   const cra=await deliverPendingConsumerDeliveries({store,publisher:okPublisher,consumerId:'cra',tenant:'acceptance',project:'multi-consumer',options:{maxAttempts:3,retryDelayMs:0},root:auditRoot,auditLogFile:'.sentrycode/acceptance-audit.jsonl',now:new Date()});

@@ -25,14 +25,32 @@ export class PostgresApplicationStateStore implements ApplicationStateStore {
   }
   async migrate(): Promise<number> {
     const here = dirname(fileURLToPath(import.meta.url));
-    for (const migration of ['001_application_state.sql', '002_cra_report_delivery.sql', '003_consumer_delivery.sql', '004_consumer_delivery_contract_version.sql']) {
-      const candidates = [resolve(here, `../../migrations/${migration}`), resolve(process.cwd(), `migrations/${migration}`)];
+    const migrations = [
+      { version: 1, file: '001_application_state.sql' },
+      { version: 2, file: '002_cra_report_delivery.sql' },
+      { version: 3, file: '003_consumer_delivery.sql' },
+      { version: 4, file: '004_consumer_delivery_contract_version.sql' }
+    ] as const;
+    const ledger = await this.pool.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.sentrycode_schema_migrations') IS NOT NULL AS exists"
+    );
+    const applied = new Set<number>();
+    if (ledger.rows[0]?.exists) {
+      const result = await this.pool.query<{ version: number }>(
+        'SELECT version::int AS version FROM sentrycode_schema_migrations ORDER BY version'
+      );
+      for (const row of result.rows) applied.add(row.version);
+    }
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue;
+      const candidates = [resolve(here, `../../migrations/${migration.file}`), resolve(process.cwd(), `migrations/${migration.file}`)];
       let sql = '';
       for (const candidate of candidates) { try { sql = await readFile(candidate, 'utf8'); break; } catch {} }
-      if (!sql) throw new Error(`SentryCode migration ${migration} not found`);
+      if (!sql) throw new Error(`SentryCode migration ${migration.file} not found`);
       await this.pool.query(sql);
+      applied.add(migration.version);
     }
-    return 4;
+    return applied.size === 0 ? 0 : Math.max(...applied);
   }
   async listRepositories(tenant: string, project: string) { const r=await this.pool.query('SELECT * FROM sentrycode_repositories WHERE tenant=$1 AND project=$2 ORDER BY name',[tenant,project]); return r.rows.map(rowRepo); }
   async upsertRepository(v: Omit<RegisteredRepository,'createdAt'|'updatedAt'>, actor: string) { const r=await this.pool.query(`INSERT INTO sentrycode_repositories(id,tenant,project,name,root_path,default_branch,enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=excluded.name,root_path=excluded.root_path,default_branch=excluded.default_branch,enabled=excluded.enabled,updated_at=now() RETURNING *`,[v.id,v.tenant,v.project,v.name,v.rootPath,v.defaultBranch,v.enabled]); await this.audit(actor,'repository.upsert','repository',v.id,{tenant:v.tenant,project:v.project}); return rowRepo(r.rows[0]); }
