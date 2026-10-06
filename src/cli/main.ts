@@ -6,6 +6,7 @@ import { loadConfig } from '../config/load.js';
 import { runScan } from '../core/engine.js';
 import { SecretsScanner } from '../scanners/secrets/scanner.js';
 import { DependencyScanner } from '../scanners/dependencies/scanner.js';
+import { SupplyChainScanner } from '../scanners/supply-chain/scanner.js';
 import { SastScanner } from '../scanners/sast/scanner.js';
 import { GitAssuranceScanner } from '../scanners/git/scanner.js';
 import { ProvenanceScanner } from '../scanners/provenance.js';
@@ -778,7 +779,7 @@ async function main(): Promise<number> {
     const report = await runScan({
       repository,
       config,
-      scanners: [new SecretsScanner(), new DependencyScanner(), new SastScanner(), new ExternalSastScanner(), new GitAssuranceScanner(), new ProvenanceScanner(), new AutomotiveScanner()],
+      scanners: [new SecretsScanner(), new DependencyScanner(), new SupplyChainScanner(), new SastScanner(), new ExternalSastScanner(), new GitAssuranceScanner(), new ProvenanceScanner(), new AutomotiveScanner()],
       execution,
       ...(options.service ? { service: options.service } : {})
     });
