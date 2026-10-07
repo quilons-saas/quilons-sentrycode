@@ -64,6 +64,7 @@ export const DEFAULT_CONFIG: SentryCodeConfig = {
   ci: { enabled: true, provider: 'auto', annotations: true },
   monorepo: { enabled: true, serviceRoots: [], discoverWorkspaces: true },
   incremental: { enabled: true, baseRef: '', headRef: 'HEAD', cacheFile: '.sentrycode/cache/incremental.json', scannerTimeoutMs: 120000 },
+  execution: { runner: { enabled: false, endpoint: 'http://sentrycode-runner:7791', tokenEnv: 'SENTRYCODE_RUNNER_TOKEN', tenant: '', project: '', timeoutMs: 300000, profiles: { 'supply-chain': 'syft-grype' } } },
   compliance: { enabled: false, tenant: '', project: '', storeDirectory: '.sentrycode/compliance', endpoint: '', tokenEnv: 'SENTRYCODE_COMPLIANCE_TOKEN', timeoutMs: 15000, listenHost: '127.0.0.1', listenPort: 7786, apiTokenEnv: 'SENTRYCODE_PLUGIN_API_TOKEN', authMode: 'static', hmacSecretEnv: 'SENTRYCODE_PLUGIN_HMAC_SECRET', tokenIssuer: 'quilons-compliance', tokenAudience: 'quilons.sentrycode' },
   consumers: [],
   craReporting: { enabled: false, endpoint: '', assessmentId: '', tokenEnv: 'SENTRYCODE_CRA_TOKEN', timeoutMs: 15000, maxAttempts: 5, retryDelayMs: 30000, severities: ['high', 'critical'], findingTypes: [] },

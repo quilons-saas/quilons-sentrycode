@@ -80,6 +80,8 @@ export interface ScannerContext {
   config: SentryCodeConfig;
   now: () => Date;
   execution?: ScanExecutionContext;
+  /** Cooperative cancellation propagated by the scan engine into scanner/provider execution. */
+  signal?: AbortSignal;
 }
 
 export interface CiContext {
@@ -136,11 +138,15 @@ export interface Waiver {
 }
 
 export interface DependencyComponent {
-  ecosystem: 'npm' | 'pypi' | 'maven' | 'nuget' | 'conan' | 'vcpkg' | 'cargo' | 'go';
+  ecosystem: 'npm' | 'pypi' | 'maven' | 'nuget' | 'conan' | 'vcpkg' | 'cargo' | 'go' | 'apk' | 'deb' | 'rpm';
   name: string;
   version: string;
   direct: boolean;
+  /** Relationship classification from the authoritative inventory when available. */
+  relationship?: 'direct' | 'transitive' | 'os' | 'unknown';
   dev: boolean;
+  /** Original inventory scope when supplied by the provider. */
+  inventoryScope?: string;
   source: string;
   license?: string;
   purl: string;
@@ -403,6 +409,17 @@ export interface SentryCodeConfig {
     headRef: string;
     cacheFile: string;
     scannerTimeoutMs: number;
+  };
+  execution: {
+    runner: {
+      enabled: boolean;
+      endpoint: string;
+      tokenEnv: string;
+      tenant: string;
+      project: string;
+      timeoutMs: number;
+      profiles: Record<string, string>;
+    };
   };
   compliance: {
     enabled: boolean;

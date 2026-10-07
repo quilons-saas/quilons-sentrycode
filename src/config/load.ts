@@ -117,6 +117,8 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
   const ci = raw.ci === undefined ? {} : asObject(raw.ci, 'ci');
   const monorepo = raw.monorepo === undefined ? {} : asObject(raw.monorepo, 'monorepo');
   const incremental = raw.incremental === undefined ? {} : asObject(raw.incremental, 'incremental');
+  const execution = raw.execution === undefined ? {} : asObject(raw.execution, 'execution');
+  const runner = execution.runner === undefined ? {} : asObject(execution.runner, 'execution.runner');
   const compliance = raw.compliance === undefined ? {} : asObject(raw.compliance, 'compliance');
   const craReporting = raw.craReporting === undefined ? {} : asObject(raw.craReporting, 'craReporting');
   const offline = raw.offline === undefined ? {} : asObject(raw.offline, 'offline');
@@ -299,6 +301,17 @@ function mergeConfig(raw: Record<string, unknown>): SentryCodeConfig {
       cacheFile: typeof incremental.cacheFile === 'string' ? incremental.cacheFile : DEFAULT_CONFIG.incremental.cacheFile,
       scannerTimeoutMs: typeof incremental.scannerTimeoutMs === 'number' ? incremental.scannerTimeoutMs : DEFAULT_CONFIG.incremental.scannerTimeoutMs
     },
+    execution: {
+      runner: {
+        enabled: typeof runner.enabled === 'boolean' ? runner.enabled : DEFAULT_CONFIG.execution.runner.enabled,
+        endpoint: typeof runner.endpoint === 'string' ? runner.endpoint : DEFAULT_CONFIG.execution.runner.endpoint,
+        tokenEnv: typeof runner.tokenEnv === 'string' ? runner.tokenEnv : DEFAULT_CONFIG.execution.runner.tokenEnv,
+        tenant: typeof runner.tenant === 'string' ? runner.tenant : DEFAULT_CONFIG.execution.runner.tenant,
+        project: typeof runner.project === 'string' ? runner.project : DEFAULT_CONFIG.execution.runner.project,
+        timeoutMs: typeof runner.timeoutMs === 'number' && runner.timeoutMs > 0 ? runner.timeoutMs : DEFAULT_CONFIG.execution.runner.timeoutMs,
+        profiles: stringRecord(runner.profiles, DEFAULT_CONFIG.execution.runner.profiles, 'execution.runner.profiles')
+      }
+    },
     compliance: {
       enabled: typeof compliance.enabled === 'boolean' ? compliance.enabled : DEFAULT_CONFIG.compliance.enabled,
       tenant: typeof compliance.tenant === 'string' ? compliance.tenant : DEFAULT_CONFIG.compliance.tenant,
@@ -386,6 +399,12 @@ function applyEnvironmentOverrides(config: SentryCodeConfig, env: Record<string,
   }
   if (env.SENTRYCODE_INCREMENTAL_BASE !== undefined) next.incremental.baseRef = env.SENTRYCODE_INCREMENTAL_BASE;
   if (env.SENTRYCODE_INCREMENTAL_HEAD) next.incremental.headRef = env.SENTRYCODE_INCREMENTAL_HEAD;
+  if (env.SENTRYCODE_RUNNER_ENDPOINT !== undefined) next.execution.runner.endpoint = env.SENTRYCODE_RUNNER_ENDPOINT;
+  if (env.SENTRYCODE_RUNNER_TOKEN_ENV) next.execution.runner.tokenEnv = env.SENTRYCODE_RUNNER_TOKEN_ENV;
+  if (env.SENTRYCODE_RUNNER_TENANT !== undefined) next.execution.runner.tenant = env.SENTRYCODE_RUNNER_TENANT;
+  if (env.SENTRYCODE_RUNNER_PROJECT !== undefined) next.execution.runner.project = env.SENTRYCODE_RUNNER_PROJECT;
+  if (env.SENTRYCODE_RUNNER_ENABLED === 'true') next.execution.runner.enabled = true;
+  if (env.SENTRYCODE_RUNNER_ENABLED === 'false') next.execution.runner.enabled = false;
   if (env.SENTRYCODE_SCANNER_TIMEOUT_MS) {
     const value = Number(env.SENTRYCODE_SCANNER_TIMEOUT_MS);
     if (!Number.isFinite(value) || value < 0) throw new Error('SENTRYCODE_SCANNER_TIMEOUT_MS must be a non-negative number');

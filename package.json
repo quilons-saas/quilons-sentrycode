@@ -30,7 +30,8 @@
     "release:verify": "npm run package:smoke",
     "acceptance:docker": "node scripts/acceptance/standalone-docker.mjs",
     "acceptance:market": "npm run check && npm test && npm run build && node scripts/acceptance/market-readiness.mjs",
-    "acceptance:multi-consumer": "npm run build && node scripts/acceptance/multi-consumer-postgres.mjs"
+    "acceptance:multi-consumer": "npm run build && node scripts/acceptance/multi-consumer-postgres.mjs",
+    "runner": "npm run build && node dist/execution/runner-main.js"
   },
   "engines": {
     "node": ">=20"

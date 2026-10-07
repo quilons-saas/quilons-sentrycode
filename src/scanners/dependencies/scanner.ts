@@ -92,7 +92,7 @@ export class DependencyScanner implements ScannerPlugin {
     }
 
     let dbUpdatedAt: string | undefined;
-    if (context.config.vulnerabilities.enabled) {
+    if (context.config.vulnerabilities.enabled && !context.config.execution?.runner?.enabled) {
       const db = await loadVulnerabilityDatabase(context.repository.root, context.config.vulnerabilities.databaseFile);
       dbUpdatedAt = db.updatedAt;
       if (context.config.offline.enabled && !db.available) throw new Error(`Offline vulnerability database is required but unavailable: ${context.config.vulnerabilities.databaseFile}`);

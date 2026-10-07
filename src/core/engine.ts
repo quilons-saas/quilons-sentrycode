@@ -28,13 +28,15 @@ export async function runScan(args: {
   const startedAt = now().toISOString();
   const runOne = async (scanner: ScannerPlugin): Promise<ScannerResult> => {
     const started = performance.now();
+    const controller = new AbortController();
     try {
       const timeoutMs = args.config.incremental.scannerTimeoutMs;
       const scan = scanner.scan({
         repository: args.repository,
         config: args.config,
         now,
-        ...(args.execution ? { execution: args.execution } : {})
+        ...(args.execution ? { execution: args.execution } : {}),
+        signal: controller.signal
       });
       let result: ScannerResult;
       if (timeoutMs > 0) {
@@ -43,7 +45,11 @@ export async function runScan(args: {
           result = await Promise.race([
             scan,
             new Promise<never>((_, reject) => {
-              timer = setTimeout(() => reject(new Error(`scanner timed out after ${timeoutMs}ms`)), timeoutMs);
+              timer = setTimeout(() => {
+                const error = new Error(`scanner timed out after ${timeoutMs}ms`);
+                controller.abort(error);
+                reject(error);
+              }, timeoutMs);
             })
           ]);
         } finally {
@@ -54,6 +60,7 @@ export async function runScan(args: {
       }
       return { ...result, status: result.status ?? 'success' };
     } catch (error) {
+      if (!controller.signal.aborted) controller.abort(error);
       return {
         scanner: scanner.id,
         findings: [],
@@ -86,7 +93,11 @@ export async function runScan(args: {
       evidenceTypes: [...status.requirements.evidenceTypes].sort()
     }))
     .sort((a, b) => a.consumerId.localeCompare(b.consumerId));
-  const effectivePolicy = resolvePolicy(args.config, documents, { requiredScannersFloor: consumerScanners });
+  const managedProfileScanners = args.config.execution.runner.enabled
+    ? Object.keys(args.config.execution.runner.profiles).filter((scannerId) => Boolean(args.config.execution.runner.profiles[scannerId]))
+    : [];
+  const requiredScannersFloor = [...new Set([...consumerScanners, ...managedProfileScanners])].sort();
+  const effectivePolicy = resolvePolicy(args.config, documents, { requiredScannersFloor });
   const waivers = await loadWaivers(args.repository.root, args.config.waivers.file);
   const policy = evaluatePolicy(args.config, scannerResults, waivers, now(), effectivePolicy, policyContext);
 
@@ -120,6 +131,8 @@ export async function runScan(args: {
       waivedCount: policy.waivedCount,
       opaEnabled: args.config.policy.opa.enabled,
       consumerRequiredScanners: consumerScanners.join(','),
+      managedProfileRequiredScanners: managedProfileScanners.join(','),
+      requiredScannerFloor: requiredScannersFloor.join(','),
       consumerPlan: JSON.stringify(consumerPlan)
     }
   };
