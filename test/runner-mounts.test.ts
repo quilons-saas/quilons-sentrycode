@@ -12,6 +12,7 @@ test('managed runner uses named-volume subpaths instead of host path assumptions
   assert.ok(args.includes('type=volume,src=sc-work,dst=/input,volume-subpath=jobs/run-1/input,readonly'));
   assert.ok(args.includes('type=volume,src=sc-work,dst=/output,volume-subpath=jobs/run-1/output'));
   assert.ok(args.includes('type=volume,src=sc-profiles,dst=/profile,volume-subpath=syft-grype,readonly'));
+  assert.ok(args.includes('type=tmpfs,dst=/tmp,tmpfs-size=67108864,tmpfs-mode=1777'));
   assert.equal(args.some((arg) => arg.includes('type=bind,src=/runner-work')), false);
 });
 

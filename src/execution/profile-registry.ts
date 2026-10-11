@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { LoadedRunnerProfile, RunnerProfileManifestV1 } from './contracts.js';
@@ -121,6 +123,26 @@ function parseManifest(raw: unknown): RunnerProfileManifestV1 {
 }
 
 
+export async function hashProfileAsset(path: string): Promise<string> {
+  return await new Promise<string>((resolveHash, rejectHash) => {
+    const digest = createHash('sha256');
+    const stream = createReadStream(path);
+    let settled = false;
+    const rejectOnce = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      rejectHash(error);
+    };
+    stream.on('error', rejectOnce);
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolveHash(digest.digest('hex'));
+    });
+  });
+}
+
 async function assertDeclaredProfileFiles(directory: string, declared: Set<string>, relativeRoot = ''): Promise<void> {
   const current = relativeRoot ? resolve(directory, relativeRoot) : directory;
   for (const entry of await readdir(current, { withFileTypes: true })) {
@@ -162,7 +184,7 @@ export class RunnerProfileRegistry {
       const st = await lstat(absolute);
       if (!st.isFile() || st.isSymbolicLink()) throw new Error(`Runner profile asset is not a regular file: ${asset.path}`);
       const safe = await assertInside(dirReal, absolute);
-      const actual = sha256(await readFile(safe));
+      const actual = await hashProfileAsset(safe);
       if (actual !== asset.sha256) throw new Error(`Runner profile asset hash mismatch: ${asset.path}`);
     }
     if (manifest.intelligence) {

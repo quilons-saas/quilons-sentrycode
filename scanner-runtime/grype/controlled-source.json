@@ -1,0 +1,51 @@
+{
+    "schemaVersion":  1,
+    "scanner":  "quilons-controlled-grype",
+    "controlledVersion":  "0.120.0-quilons.1",
+    "upstream":  {
+                     "repository":  "github.com/anchore/grype",
+                     "version":  "v0.120.0",
+                     "commit":  "10fbc043ecbaf8436daa9efac9f1632557caf277"
+                 },
+    "syftCompatibility":  {
+                              "repository":  "github.com/anchore/syft",
+                              "version":  "v1.54.0",
+                              "commit":  "cc326e45a6213360266dda4b30cc68095946d676"
+                          },
+    "runtime":  {
+                    "database":  "operator-provisioned local Grype v6 only",
+                    "network":  "none",
+                    "input":  "CycloneDX 1.5",
+                    "output":  "Grype-compatible JSON",
+                    "v6PackageMode":  "read-only-reduced",
+                    "v6InternalHydration":  "provider-read, os-read, blob-read, low-level-read-db"
+                },
+    "sourceModifications":  [
+                                {
+                                    "path":  "grype/db/v6/vulnerability_provider.go",
+                                    "action":  "excluded from controlled build",
+                                    "reason":  "wrapper uses Reader stores directly; provider imports broad grype/pkg and go-multierror paths not needed for local package-range matching"
+                                },
+                                {
+                                    "paths":  [
+                                                  "grype/version/bitnami_version.go",
+                                                  "grype/version/fuzzy_constraint.go",
+                                                  "grype/version/golang_version.go",
+                                                  "grype/version/jvm_version.go",
+                                                  "grype/version/semantic_version.go"
+                                              ],
+                                    "action":  "replace github.com/anchore/go-version with github.com/Masterminds/semver/v3 already pinned by upstream Grype",
+                                    "reason":  "remove non-permissive-policy target while preserving semver/version APIs used by Grype comparators"
+                                },
+                                {
+                                    "path":  "grype/db/v6/db.go",
+                                    "action":  "reduced to read-only Reader contract with internal hydration methods",
+                                    "reason":  "retain only metadata/provider/vulnerability/OS/affected/unaffected reads plus attachBlobValue and low-level DB access required by upstream fillers"
+                                },
+                                {
+                                    "path":  "grype/db/v6/store.go",
+                                    "action":  "reduced to read-only store composition",
+                                    "reason":  "retain provider and operating-system read stores because upstream package-hydration helpers require them; no write/update/import stores are restored"
+                                }
+                            ]
+}

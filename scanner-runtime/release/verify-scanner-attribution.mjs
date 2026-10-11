@@ -1,0 +1,19 @@
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+// QUILONS_A19_JSON_BOM
+function parseJsonText(text) {
+  return JSON.parse(String(text).replace(/^\uFEFF/, ""));
+}
+const root=process.argv[2];if(!root){console.error("usage: node verify-scanner-attribution.mjs <attribution-root>");process.exit(2)}
+const required=["THIRD_PARTY_NOTICES.txt","THIRD_PARTY_COMPONENTS.json","SCANNER_PROVENANCE.json","RUNNER_PROVENANCE.json","MODIFICATIONS.json","SCANNER_BINARY_SBOM.cdx.json","SCANNER_IMAGE_SBOM.cdx.json","DISTRIBUTION_SBOM.cdx.json"];
+for(const rel of required){const p=path.join(root,rel);if(!fs.existsSync(p)||!fs.statSync(p).isFile())throw new Error(`missing required release attribution artifact: ${rel}`)}
+function walk(dir){const out=[];for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,entry.name);if(entry.isDirectory())out.push(...walk(p));else if(entry.isFile())out.push(p);else throw new Error(`unsupported non-regular attribution entry: ${p}`)}return out}
+for(const file of walk(root)){const lower=file.toLowerCase().replaceAll("\\","/");if(lower.endsWith("/vulnerability.db")||lower.includes("/profile/db/"))throw new Error(`Grype vulnerability DB must not be redistributed: ${file}`)}
+const thirdParty=parseJsonText(fs.readFileSync(path.join(root,"THIRD_PARTY_COMPONENTS.json"),"utf8"));if(!Array.isArray(thirdParty.components)||thirdParty.components.length===0)throw new Error("third-party component inventory is empty");
+const blocked=new Set(thirdParty.policy?.blockedModules??[]);const failures=[];
+for(const component of thirdParty.components){if(blocked.has(component.name))failures.push(`${component.name}@${component.version}: blocked module`);if(component.status!=="permitted")failures.push(`${component.name}@${component.version}: ${component.status}`);if(!Array.isArray(component.licenseIds)||component.licenseIds.length===0)failures.push(`${component.name}@${component.version}: no resolved license`);for(const license of component.licenseIds??[]){if(["GPL","LGPL","AGPL","MPL-2.0","UNKNOWN"].includes(license))failures.push(`${component.name}@${component.version}: prohibited/unresolved ${license}`)}for(const record of component.licenseFiles??[]){const p=path.join(root,record.path);if(!fs.existsSync(p)){failures.push(`${component.name}@${component.version}: missing ${record.path}`);continue}const sha=crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");if(sha!==record.sha256)failures.push(`${component.name}@${component.version}: checksum mismatch ${record.path}`)}}
+const provenance=parseJsonText(fs.readFileSync(path.join(root,"SCANNER_PROVENANCE.json"),"utf8"));if(!Array.isArray(provenance)||provenance.length!==2)failures.push("scanner provenance must contain exactly controlled Syft and controlled Grype");else{const ids=new Set(provenance.map(x=>x.scanner));for(const id of ["syft","grype"])if(!ids.has(id))failures.push(`missing scanner provenance: ${id}`);for(const p of provenance){if(!/^sha256:[a-f0-9]{64}$/i.test(p.imageId??""))failures.push(`${p.scanner}: invalid image id`);for(const field of ["archivePath","binaryPath"]){if(!fs.existsSync(path.join(root,p[field])))failures.push(`${p.scanner}: missing ${field}`)}}}
+for(const sbomName of ["SCANNER_BINARY_SBOM.cdx.json","SCANNER_IMAGE_SBOM.cdx.json","DISTRIBUTION_SBOM.cdx.json"]){const sbom=parseJsonText(fs.readFileSync(path.join(root,sbomName),"utf8"));if(sbom.bomFormat!=="CycloneDX"||sbom.specVersion!=="1.5")failures.push(`${sbomName}: expected CycloneDX 1.5`);if(!Array.isArray(sbom.components)||sbom.components.length===0)failures.push(`${sbomName}: empty components`)}
+if(failures.length){console.error(JSON.stringify({status:"fail",failureCount:failures.length,failures},null,2));process.exit(1)}
+console.log(JSON.stringify({status:"pass",componentCount:thirdParty.components.length,scannerCount:provenance.length,grypeDbRedistributed:false}));

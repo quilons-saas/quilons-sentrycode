@@ -55,6 +55,45 @@ async function runCommand(binary: string, args: string[], maxBytes: number): Pro
 
 function safeName(value: string): string { return value.replace(/[^A-Za-z0-9_.-]/g, '-').slice(0, 48); }
 
+export function boundedScannerLog(value: string, maxLength = 512): string {
+  const singleLine = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  if (!singleLine) return '';
+  return singleLine.length <= maxLength ? singleLine : `${singleLine.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+export function ownershipFallbackAllowed(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EPERM' || code === 'EACCES';
+}
+
+export async function prepareWorkerOutputDirectory(
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+  changeOwner: (path: string, uid: number, gid: number) => Promise<void> = chown,
+  changeMode: (path: string, mode: number) => Promise<void> = chmod
+): Promise<'owned' | 'portable-permissions'> {
+  await mkdir(directory, { recursive: true, mode: 0o770 });
+  await changeMode(directory, 0o770).catch(() => undefined);
+
+  if (platform === 'win32') return 'portable-permissions';
+
+  try {
+    await changeOwner(directory, 65532, 65532);
+    return 'owned';
+  } catch (error) {
+    if (!ownershipFallbackAllowed(error)) throw error;
+
+    // Some containerized named-volume backends permit chmod but reject chown
+    // even for the installation runner running as root. The directory is
+    // per-run and mounted only into the isolated scanner worker as /output.
+    // Keep the worker non-root and grant write access only at this job-local
+    // boundary rather than escalating the scanner container to root.
+    await changeMode(directory, 0o777);
+    return 'portable-permissions';
+  }
+}
+
 export function dockerMountArgs(options: DockerExecutorOptions): string[] {
   const volumeSubpath = (absolute: string, root: string, label: string): string => {
     const normalized = absolute.replace(/\\/g, '/');
@@ -69,6 +108,7 @@ export function dockerMountArgs(options: DockerExecutorOptions): string[] {
     const inputSubpath = volumeSubpath(options.inputDirectory, workRoot, 'input');
     const outputSubpath = volumeSubpath(options.outputDirectory, workRoot, 'output');
     const args = [
+      '--mount', 'type=tmpfs,dst=/tmp,tmpfs-size=67108864,tmpfs-mode=1777',
       '--mount', `type=volume,src=${options.workVolumeName},dst=/input,volume-subpath=${inputSubpath},readonly`,
       '--mount', `type=volume,src=${options.workVolumeName},dst=/output,volume-subpath=${outputSubpath}`
     ];
@@ -82,6 +122,7 @@ export function dockerMountArgs(options: DockerExecutorOptions): string[] {
     return args;
   }
   return [
+    '--mount', 'type=tmpfs,dst=/tmp,tmpfs-size=67108864,tmpfs-mode=1777',
     '--mount', `type=bind,src=${options.inputDirectory},dst=/input,readonly`,
     '--mount', `type=bind,src=${options.outputDirectory},dst=/output`,
     '--mount', `type=bind,src=${options.profileDirectory},dst=/profile,readonly`
@@ -142,9 +183,7 @@ export class DockerWorkerExecutor {
     cleanupConfirmed: boolean;
   }> {
     validateRunId(runId);
-    await mkdir(this.options.outputDirectory, { recursive: true, mode: 0o770 });
-    await chmod(this.options.outputDirectory, 0o770).catch(() => undefined);
-    if (process.platform !== 'win32') await chown(this.options.outputDirectory, 65532, 65532);
+    await prepareWorkerOutputDirectory(this.options.outputDirectory);
     const steps: RunnerStepIdentity[] = [];
     const events: RunnerEvent[] = [];
     const emit = (code: RunnerEvent['code'], message: string, stepId?: string) => events.push({ at: new Date().toISOString(), code, message, ...(stepId ? { stepId } : {}) });
@@ -216,7 +255,19 @@ export class DockerWorkerExecutor {
         await this.cleanupRun(runId); break;
       }
       if (!Number.isInteger(exitCode) || !step.acceptedExitCodes.includes(exitCode)) {
-        outcome = 'failed'; errorCode = 'SCANNER_EXECUTION_FAILED'; emit('SCANNER_EXECUTION_FAILED', `Scanner step exited with ${Number.isInteger(exitCode) ? exitCode : 'unknown'}`, step.id);
+        outcome = 'failed';
+        errorCode = 'SCANNER_EXECUTION_FAILED';
+
+        const scannerLog = boundedScannerLog(
+          [logs.stderr, logs.stdout].filter((value) => value.trim()).join(' | ')
+        );
+
+        emit(
+          'SCANNER_EXECUTION_FAILED',
+          `Scanner step exited with ${Number.isInteger(exitCode) ? exitCode : 'unknown'}${scannerLog ? `: ${scannerLog}` : ''}`,
+          step.id
+        );
+
         steps.push({ stepId: step.id, imageRef: step.imageRef, imageDigest, exitCode: Number.isInteger(exitCode) ? exitCode : null, outcome });
         await this.cleanupRun(runId); break;
       }

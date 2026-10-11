@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { EvidenceRecord, PolicyContext, ScanExecutionContext, ScanReport, ScannerPlugin, ScannerResult, SentryCodeConfig } from './types.js';
+import type { EvidenceRecord, PolicyContext, ScanExecutionContext, ScanReport, ScannerFailure, ScannerPlugin, ScannerResult, SentryCodeConfig } from './types.js';
 import type { RepositoryContext } from './types.js';
 import { SCHEMA_VERSION } from './types.js';
 import { evaluatePolicy } from '../policy/evaluate.js';
@@ -14,6 +14,31 @@ const RANK = { PASS: 0, WARN: 1, FAIL: 2 } as const;
 
 function stricter<T extends keyof typeof RANK>(a: T, b: T): T {
   return RANK[a] >= RANK[b] ? a : b;
+}
+
+function classifyScannerFailure(message: string): ScannerFailure {
+  const normalized = message.trim() || 'unknown scanner error';
+  const code = normalized.match(/\b(SCANNER_[A-Z_]+)\b/)?.[1];
+
+  let category: ScannerFailure['category'] = 'unknown';
+
+  if (/(?:governed\s+)?intelligence|vulnerability database|grype[- ]db|rules identity|freshness|stale|intelligence digest|intelligence timestamp/i.test(normalized)) {
+    category = 'intelligence';
+  } else if (/no runner profile configured|runner credential is unavailable|runner tenant\/project scope is not configured|runner endpoint must|runner token is required|runner timeout must be positive|profile.+(?:missing|not found|unavailable|invalid)|undeclared asset/i.test(normalized)) {
+    category = 'provisioning';
+  } else if (/SCANNER_LAUNCH_FAILED|unable to invoke container runtime|container creation failed|container start failed|runner request failed|fetch failed|ECONNREFUSED|ENOTFOUND|runner request timed out/i.test(normalized)) {
+    category = 'runner_startup';
+  } else if (/SCANNER_EXECUTION_FAILED|SCANNER_TIMEOUT|SCANNER_OUTPUT_|SCANNER_CLEANUP_UNCONFIRMED|supply-chain execution failed|runner artifact integrity failure|runner produced (?:empty|invalid)|execution did not complete|scanner timed out/i.test(normalized)) {
+    category = 'scanner_execution';
+  } else if (/coverage incomplete|unresolved component|component relationship.+unresolved/i.test(normalized)) {
+    category = 'coverage';
+  }
+
+  return {
+    category,
+    ...(code ? { code } : {}),
+    message: normalized
+  };
 }
 
 export async function runScan(args: {
@@ -58,16 +83,23 @@ export async function runScan(args: {
       } else {
         result = await scan;
       }
-      return { ...result, status: result.status ?? 'success' };
+      const normalized = { ...result, status: result.status ?? 'success' };
+      if (normalized.status === 'failed' && !normalized.failure) {
+        const failure = classifyScannerFailure(normalized.error ?? 'unknown scanner error');
+        return { ...normalized, failure };
+      }
+      return normalized;
     } catch (error) {
       if (!controller.signal.aborted) controller.abort(error);
+      const message = error instanceof Error ? error.message : String(error);
       return {
         scanner: scanner.id,
         findings: [],
         evidence: [],
         durationMs: Math.round(performance.now() - started),
         status: 'failed',
-        error: (error as Error).message
+        error: message,
+        failure: classifyScannerFailure(message)
       };
     }
   };
@@ -114,6 +146,29 @@ export async function runScan(args: {
   }
 
   const completedAt = now().toISOString();
+  const scannerFailureEvidence: EvidenceRecord[] = scannerResults
+    .filter((result) => result.status === 'failed')
+    .map((result) => {
+      const failure = result.failure ?? classifyScannerFailure(result.error ?? 'unknown scanner error');
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        id: stableId('evidence', `${args.repository.commitSha}|scanner.failure|${result.scanner}|${failure.category}|${failure.code ?? ''}|${failure.message}`),
+        type: 'scanner.failure',
+        scanner: result.scanner,
+        repository: args.repository.repository,
+        commitSha: args.repository.commitSha,
+        branch: args.repository.branch,
+        generatedAt: completedAt,
+        findingIds: [],
+        metadata: {
+          category: failure.category,
+          code: failure.code ?? null,
+          error: failure.message,
+          scannerStatus: 'failed'
+        }
+      };
+    });
+
   const policyEvidence: EvidenceRecord = {
     schemaVersion: SCHEMA_VERSION,
     id: stableId('evidence', `${args.repository.commitSha}|policy.eval|${completedAt}|${effectivePolicy.fingerprint}`),
@@ -133,6 +188,8 @@ export async function runScan(args: {
       consumerRequiredScanners: consumerScanners.join(','),
       managedProfileRequiredScanners: managedProfileScanners.join(','),
       requiredScannerFloor: requiredScannersFloor.join(','),
+      scannerFailureCount: scannerFailureEvidence.length,
+      scannerFailureCategories: [...new Set(scannerFailureEvidence.map((item) => String(item.metadata.category)))].sort().join(','),
       consumerPlan: JSON.stringify(consumerPlan)
     }
   };
@@ -145,7 +202,7 @@ export async function runScan(args: {
     repository: args.repository,
     scanners: scannerResults,
     policy,
-    evidence: [...scannerResults.flatMap((result) => result.evidence), policyEvidence],
+    evidence: [...scannerResults.flatMap((result) => result.evidence), ...scannerFailureEvidence, policyEvidence],
     ...(args.execution ? { execution: args.execution } : {})
   };
 }

@@ -34,6 +34,13 @@ function json(res: ServerResponse, status: number, value: unknown): void {
   res.end(body);
 }
 function authToken(req: IncomingMessage): string { const raw = req.headers.authorization ?? ''; return raw.startsWith('Bearer ') ? raw.slice(7) : ''; }
+
+export function boundedRunnerDiagnostic(error: unknown, maxLength = 512): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const singleLine = raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  const safe = singleLine || 'unknown runner launch failure';
+  return safe.length <= maxLength ? safe : `${safe.slice(0, Math.max(0, maxLength - 3))}...`;
+}
 async function readBody(req: IncomingMessage, limit: number): Promise<unknown> {
   const chunks: Buffer[] = []; let bytes = 0;
   for await (const raw of req) { const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw); bytes += chunk.length; if (bytes > limit) throw new Error('REQUEST_TOO_LARGE'); chunks.push(chunk); }
@@ -147,9 +154,21 @@ export class RunnerServer {
       let result;
       try {
         result = await executor.execute(request.runId, profile, controller.signal);
-      } catch {
+      } catch (error) {
         const cleanupConfirmed = await executor.cleanupRun(request.runId).catch(() => false);
-        result = { outcome: 'failed' as const, errorCode: 'SCANNER_LAUNCH_FAILED', artifacts: [], steps: [], events: [{ at: new Date().toISOString(), code: 'SCANNER_LAUNCH_FAILED' as const, message: 'Scanner execution could not be established' }], cleanupConfirmed };
+        const diagnostic = boundedRunnerDiagnostic(error);
+        result = {
+          outcome: 'failed' as const,
+          errorCode: 'SCANNER_LAUNCH_FAILED',
+          artifacts: [],
+          steps: [],
+          events: [{
+            at: new Date().toISOString(),
+            code: 'SCANNER_LAUNCH_FAILED' as const,
+            message: `Scanner execution could not be established: ${diagnostic}`
+          }],
+          cleanupConfirmed
+        };
       }
       const response: RunnerJobResponseV1 = {
         schemaVersion: RUNNER_API_VERSION, runId: request.runId, scope: request.scope, profileId: request.profileId,

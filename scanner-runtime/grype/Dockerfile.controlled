@@ -1,0 +1,3 @@
+FROM scratch
+COPY quilons-grype /usr/local/bin/quilons-grype
+ENTRYPOINT ["/usr/local/bin/quilons-grype"]

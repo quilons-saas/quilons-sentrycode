@@ -1,0 +1,72 @@
+/work/quilons-grype: go1.26.8
+	path	quilons.local/controlled-grype
+	mod	quilons.local/controlled-grype	(devel)
+	dep	github.com/Masterminds/semver/v3	v3.5.0	h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
+	dep	github.com/OneOfOne/xxhash	v1.2.8	h1:31czK/TI9sNkxIKfaUfGlU47BAxQ0ztGgd9vPyqimf8=
+	dep	github.com/acobaugh/osrelease	v0.1.0	h1:Yb59HQDGGNhCj4suHaFQQfBps5wyoKLSSX/J/+UifRE=
+	dep	github.com/anchore/go-logger	v0.2.0	h1:V8Gazz+F8xwWEWz+whqt8/5163IkO4XrAie+1qbK10k=
+	dep	github.com/anchore/go-sync	v0.1.2	h1:RDD5RCanrWqhbtBulqPSZpERadUlgcYjpybYzYd3Uk8=
+	dep	github.com/anchore/grype	v0.120.0
+	=>	/tmp/grype	(devel)
+
+	dep	github.com/anchore/packageurl-go	v0.2.0	h1:CkrM4RMUwrEGAiE1OVlxaZNzWj0TuHRey7o4T/EAErk=
+	dep	github.com/anchore/stereoscope	v0.3.3	h1:sur8G2THAOnOrSXDjIc1SXzQwco8hjFBtGFq1jFvNVA=
+	dep	github.com/anchore/syft	v1.54.0
+	=>	/tmp/syft	(devel)
+
+	dep	github.com/aquasecurity/go-pep440-version	v0.0.1	h1:8VKKQtH2aV61+0hovZS3T//rUF+6GDn18paFTVS0h0M=
+	dep	github.com/aquasecurity/go-version	v0.0.1	h1:4cNl516agK0TCn5F7mmYN+xVs1E3S45LkgZk3cbaW2E=
+	dep	github.com/becheran/wildmatch-go	v1.0.0	h1:mE3dGGkTmpKtT4Z+88t8RStG40yN9T+kFEGj2PZFSzA=
+	dep	github.com/bitnami/go-version	v0.0.0-20250505154626-452e8c5ee607	h1:lBg3tHGquFySSblLi9zNi2iGNmVLRHBzVal2fqphCM8=
+	dep	github.com/bmatcuk/doublestar/v4	v4.10.2	h1:eF7W7HWKg3z9NrWV9pTLnNeoXaqq3Tq9DNKXVMfoCnw=
+	dep	github.com/containerd/errdefs	v1.0.0	h1:tg5yIfIlQIrxYtu9ajqY42W3lpS19XqdxRQeEwYG8PI=
+	dep	github.com/docker/cli	v29.8.1+incompatible	h1:qYL1bCp6cRw2SB1xmLlIOPyV171dilw9W2Jew38vy9c=
+	dep	github.com/docker/docker-credential-helpers	v0.9.8	h1:bIREROb7So6PRlq6KTtdS9MPEjC29OQRkFNlvK2OX8Q=
+	dep	github.com/docker/go-connections	v0.8.1	h1:JibmG5hULs5qXSr/cp/w3Pw5fZuStt4MOHMUExb29/M=
+	dep	github.com/dustin/go-humanize	v1.1.0	h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
+	dep	github.com/facebookincubator/nvdtools	v0.1.5	h1:jbmDT1nd6+k+rlvKhnkgMokrCAzHoASWE5LtHbX2qFQ=
+	dep	github.com/gabriel-vasile/mimetype	v1.4.15	h1:05iP/CYtZ/w455R/KZM6rZ5ieAdh99UPtd+d3YzLmaI=
+	dep	github.com/github/go-spdx/v2	v2.7.0	h1:GzfXx4wFdlilARxmFRXW/mgUy3A4vSqZocCMFV6XFdQ=
+	dep	github.com/glebarez/go-sqlite	v1.23.0	h1:FyhIq4jqmgphQAUlY79zPldYGwISEZikaDfhiGWkkaI=
+	dep	github.com/glebarez/sqlite	v1.11.0	h1:wSG0irqzP6VurnMEpFGer5Li19RpIRi2qvQz++w0GMw=
+	dep	github.com/go-viper/mapstructure/v2	v2.5.0	h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=
+	dep	github.com/gohugoio/hashstructure	v0.6.0	h1:7wMB/2CfXoThFYhdWRGv3u3rUM761Cq29CxUW+NltUg=
+	dep	github.com/google/go-cmp	v0.7.0	h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
+	dep	github.com/google/go-containerregistry	v0.22.1	h1:RZuuSYhTvlDvtsK+NkutoCZ//C0X2ebLK8X8l3ULs84=
+	dep	github.com/google/licensecheck	v0.3.1	h1:QoxgoDkaeC4nFrtGN1jV7IPmDCHFNIVh54e5hSt6sPs=
+	dep	github.com/google/uuid	v1.6.0	h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+	dep	github.com/jinzhu/copier	v0.4.0	h1:w3ciUoD19shMCRargcpm0cm91ytaBhDvuRpz1ODO/U8=
+	dep	github.com/jinzhu/inflection	v1.0.0	h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD/E=
+	dep	github.com/jinzhu/now	v1.1.5	h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
+	dep	github.com/klauspost/compress	v1.20.0	h1:a3C1ke2ohxFymNlb2HWAHjDeKCI90scRskErZkR0ezA=
+	dep	github.com/knqyf263/go-apk-version	v0.0.0-20200609155635-041fdbb8563f	h1:GvCU5GXhHq+7LeOzx/haG7HSIZokl3/0GkoUFzsRJjg=
+	dep	github.com/knqyf263/go-deb-version	v0.0.0-20241115132648-6f4aee6ccd23	h1:dWzdsqjh1p2gNtRKqNwuBvKqMNwnLOPLzVZT1n6DK7s=
+	dep	github.com/opencontainers/go-digest	v1.0.0	h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=
+	dep	github.com/pandatix/go-cvss	v0.6.4	h1:9w2RCO/Q4UTiJyEgpCHRiVc6CfrsFEnkoX+OtATqKio=
+	dep	github.com/pierrec/lz4/v4	v4.1.26	h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
+	dep	github.com/remyoudompheng/bigfft	v0.0.0-20230129092748-24d4a6f8daec	h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
+	dep	github.com/scylladb/go-set	v1.0.3-0.20200225121959-cc7b2070d91e	h1:7q6NSFZDeGfvvtIRwBrU/aegEYJYmvev0cHAwo17zZQ=
+	dep	github.com/sirupsen/logrus	v1.10.2	h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
+	dep	github.com/spf13/afero	v1.15.0	h1:b/YBCLWAJdFWJTN9cLhiXXcD7mzKn9Dm86dNnfyQw1I=
+	dep	github.com/sylabs/squashfs	v1.0.6	h1:PvJcDzxr+vIm2kH56mEMbaOzvGu79gK7P7IX+R7BDZI=
+	dep	github.com/therootcompany/xz	v1.0.1	h1:CmOtsn1CbtmyYiusbfmhmkpAAETj0wBIH6kCYaX+xzw=
+	dep	github.com/ulikunitz/xz	v0.5.17	h1:flR0y/x1hgM8EGV1AW3Xll6T413G0glV8UfBwR617V4=
+	dep	github.com/wagoodman/go-partybus	v0.0.0-20230516145632-8ccac152c651	h1:jIVmlAFIqV3d+DOxazTR9v+zgj8+VYuQBzPgBZvWBHA=
+	dep	github.com/wagoodman/go-progress	v0.0.0-20260303201901-10176f79b2c0	h1:EHsPe0Q0ANoLOZff1dBLAyeWLTA4sbPTpGI+2zb0FnM=
+	dep	golang.org/x/exp	v0.0.0-20260410095643-746e56fc9e2f	h1:W3F4c+6OLc6H2lb//N1q4WpJkhzJCK5J6kUi1NTVXfM=
+	dep	golang.org/x/sync	v0.23.0	h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
+	dep	golang.org/x/sys	v0.48.0	h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+	dep	golang.org/x/text	v0.42.0	h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+	dep	golang.org/x/xerrors	v0.0.0-20240903120638-7835f813f4da	h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=
+	dep	gorm.io/gorm	v1.31.2	h1:3o8FXNo9v9S858gil+3LlZA1LkCOzgb4g5BL64FgaCo=
+	dep	modernc.org/libc	v1.75.7	h1:o3DTP9/0p9pKmY2WCKQaySW6wIiZhNM7wc2lUoyhfew=
+	dep	modernc.org/mathutil	v1.7.1	h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU=
+	dep	modernc.org/memory	v1.12.1	h1:nFMiWrpStgZczNl6XI9GnIk/rWhYIyHGUaR04pGbp9g=
+	dep	modernc.org/sqlite	v1.59.0	h1:X1es1GpqBlS/5T+vbM4HLUdaa8OtQx468DF2vrx+38A=
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-trimpath=true
+	build	CGO_ENABLED=0
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1

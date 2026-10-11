@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "scanner": "quilons-controlled-syft",
+  "upstream": {
+    "repository": "github.com/anchore/syft",
+    "version": "v1.54.0",
+    "commit": "cc326e45a6213360266dda4b30cc68095946d676"
+  },
+  "controlledVersion": "1.54.0-quilons.4",
+  "coverage": [
+    "javascript-npm",
+    "python",
+    "rust",
+    "c-cpp",
+    "go",
+    "java"
+  ],
+  "sourceModifications": [
+    {
+      "path": "syft/file/location.go",
+      "purpose": "replace go-multierror/errwrap path with stdlib errors.Join"
+    },
+    {
+      "path": "syft/pkg/cataloger/golang/upx.go",
+      "purpose": "remove direct internal/file dependency"
+    },
+    {
+      "path": "syft/pkg/cataloger/golang/quilons_reader_size.go",
+      "purpose": "last-byte-verified reader-size helper"
+    },
+    {
+      "path": "internal/quilonsfile/helper.go",
+      "purpose": "controlled Java archive/digest helper"
+    },
+    {
+      "path": "syft/pkg/cataloger/java/graalvm_native_image_cataloger.go",
+      "purpose": "excluded because not enabled and imports Syft CycloneDX formatter"
+    },
+    {
+      "path": "syft/internal/elfutil/elfutil.go",
+      "purpose": "replace intFile.MB-only dependency with exact 128 MiB expression"
+    }
+  ],
+  "policy": {
+    "blockedModuleGate": "unchanged",
+    "network": "offline",
+    "source": "directory-only"
+  }
+}

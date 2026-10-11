@@ -1,0 +1,4 @@
+FROM scratch
+COPY quilons-syft /quilons-syft
+USER 65532:65532
+ENTRYPOINT ["/quilons-syft"]

@@ -57,6 +57,19 @@ export interface EvidenceRecord {
   metadata: Record<string, string | number | boolean | null>;
 }
 
+export type ScannerFailureCategory =
+  | 'runner_startup'
+  | 'scanner_execution'
+  | 'provisioning'
+  | 'intelligence'
+  | 'coverage'
+  | 'unknown';
+
+export interface ScannerFailure {
+  category: ScannerFailureCategory;
+  code?: string;
+  message: string;
+}
 export interface ScannerResult {
   scanner: string;
   findings: Finding[];
@@ -64,6 +77,7 @@ export interface ScannerResult {
   durationMs: number;
   status?: ScannerExecutionStatus;
   error?: string;
+  failure?: ScannerFailure;
 }
 
 export interface ScanExecutionContext {

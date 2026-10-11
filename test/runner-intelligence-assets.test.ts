@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { RunnerProfileRegistry } from '../src/execution/profile-registry.js';
+import { hashProfileAsset, RunnerProfileRegistry } from '../src/execution/profile-registry.js';
 import { sha256 } from '../src/execution/contracts.js';
 
 function setDigest(assets: Array<{ path: string; sha256: string }>): string {
@@ -43,5 +43,105 @@ test('profile registry rejects intelligence imported before its upstream build t
       intelligence: { provider: 'grype', id: 'db-test', schema: 'v6', builtAt: '2026-10-06T02:00:00Z', importedAt: '2026-10-06T01:00:00Z', path: 'db.bin', sha256: sha256(db), maxAgeHours: 120, sources: ['anchore'] }
     }));
     await assert.rejects(() => new RunnerProfileRegistry(root, () => new Date('2026-10-07T00:00:00Z')).load('syft-grype'), /predates/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test('profile asset hashing streams file bytes and matches the governed SHA-256 identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sc-intel-stream-hash-'));
+  const file = join(root, 'asset.bin');
+  try {
+    const chunk = Buffer.alloc(1024 * 1024, 0x5a);
+    const bytes = Buffer.concat([chunk, chunk, chunk, chunk, chunk]);
+    await writeFile(file, bytes);
+    assert.equal(await hashProfileAsset(file), sha256(bytes));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('profile registry accepts governed intelligence at the exact freshness boundary', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sc-intel-fresh-boundary-'));
+  const profile = join(root, 'syft-grype');
+  try {
+    await mkdir(profile, { recursive: true });
+    const db = Buffer.from('db');
+    await writeFile(join(profile, 'db.bin'), db);
+    await writeFile(join(profile, 'profile.json'), JSON.stringify({
+      schemaVersion: 1, id: 'syft-grype', version: 'test', rulesIdentity: 'grype:test',
+      steps: [{ id: 'scan', imageRef: `example/scanner@sha256:${'a'.repeat(64)}`, args: [], acceptedExitCodes: [0], timeoutMs: 1000, outputs: [] }],
+      assets: [{ path: 'db.bin', sha256: sha256(db) }],
+      intelligence: {
+        provider: 'grype',
+        id: 'db-test',
+        schema: 'v6',
+        builtAt: '2026-10-01T00:00:00Z',
+        importedAt: '2026-10-01T01:00:00Z',
+        path: 'db.bin',
+        sha256: sha256(db),
+        maxAgeHours: 120,
+        sources: ['anchore']
+      }
+    }));
+    const loaded = await new RunnerProfileRegistry(root, () => new Date('2026-10-06T00:00:00Z')).load('syft-grype');
+    assert.equal(loaded.manifest.intelligence?.maxAgeHours, 120);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('profile registry rejects governed intelligence older than maxAgeHours', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sc-intel-stale-'));
+  const profile = join(root, 'syft-grype');
+  try {
+    await mkdir(profile, { recursive: true });
+    const db = Buffer.from('db');
+    await writeFile(join(profile, 'db.bin'), db);
+    await writeFile(join(profile, 'profile.json'), JSON.stringify({
+      schemaVersion: 1, id: 'syft-grype', version: 'test', rulesIdentity: 'grype:test',
+      steps: [{ id: 'scan', imageRef: `example/scanner@sha256:${'a'.repeat(64)}`, args: [], acceptedExitCodes: [0], timeoutMs: 1000, outputs: [] }],
+      assets: [{ path: 'db.bin', sha256: sha256(db) }],
+      intelligence: {
+        provider: 'grype',
+        id: 'db-test',
+        schema: 'v6',
+        builtAt: '2026-10-01T00:00:00Z',
+        importedAt: '2026-10-01T01:00:00Z',
+        path: 'db.bin',
+        sha256: sha256(db),
+        maxAgeHours: 120,
+        sources: ['anchore']
+      }
+    }));
+    await assert.rejects(
+      () => new RunnerProfileRegistry(root, () => new Date('2026-10-06T00:00:01Z')).load('syft-grype'),
+      /Runner profile intelligence is stale:/
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('profile registry rejects governed intelligence timestamps more than five minutes in the future', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sc-intel-future-'));
+  const profile = join(root, 'syft-grype');
+  try {
+    await mkdir(profile, { recursive: true });
+    const db = Buffer.from('db');
+    await writeFile(join(profile, 'db.bin'), db);
+    await writeFile(join(profile, 'profile.json'), JSON.stringify({
+      schemaVersion: 1, id: 'syft-grype', version: 'test', rulesIdentity: 'grype:test',
+      steps: [{ id: 'scan', imageRef: `example/scanner@sha256:${'a'.repeat(64)}`, args: [], acceptedExitCodes: [0], timeoutMs: 1000, outputs: [] }],
+      assets: [{ path: 'db.bin', sha256: sha256(db) }],
+      intelligence: {
+        provider: 'grype',
+        id: 'db-test',
+        schema: 'v6',
+        builtAt: '2026-10-07T00:06:00Z',
+        importedAt: '2026-10-07T00:06:00Z',
+        path: 'db.bin',
+        sha256: sha256(db),
+        maxAgeHours: 120,
+        sources: ['anchore']
+      }
+    }));
+    await assert.rejects(
+      () => new RunnerProfileRegistry(root, () => new Date('2026-10-07T00:00:00Z')).load('syft-grype'),
+      /timestamp is in the future/
+    );
   } finally { await rm(root, { recursive: true, force: true }); }
 });

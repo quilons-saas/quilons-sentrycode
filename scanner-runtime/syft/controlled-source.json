@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "scanner": "syft",
+  "upstream": {
+    "repository": "https://github.com/anchore/syft.git",
+    "version": "v1.54.0",
+    "commit": "cc326e45a6213360266dda4b30cc68095946d676"
+  },
+  "policy": {
+    "purpose": "remove prohibited MPL dependency chain from the QUILONS-controlled reduced Syft runtime",
+    "blockedModules": [
+      "github.com/hashicorp/errwrap",
+      "github.com/hashicorp/go-multierror"
+    ]
+  },
+  "patches": [
+    {
+      "id": "syft-file-location-stdlib-errors-join",
+      "path": "syft/file/location.go",
+      "reason": "replace go-multierror aggregation with Go standard-library errors.Join while preserving returned error semantics"
+    }
+  ]
+}
